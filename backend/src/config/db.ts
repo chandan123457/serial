@@ -75,6 +75,26 @@ export async function initializeDatabase() {
     ADD COLUMN IF NOT EXISTS batch_id UUID REFERENCES generated_code_batches(id);
   `);
 
+  await pool.query(`
+    ALTER TABLE generated_operator_codes
+    DROP CONSTRAINT IF EXISTS generated_operator_codes_serial_key;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'generated_operator_codes_type_order_serial_key'
+      ) THEN
+        ALTER TABLE generated_operator_codes
+        ADD CONSTRAINT generated_operator_codes_type_order_serial_key
+        UNIQUE (section_key, code_type, order_id, serial);
+      END IF;
+    END $$;
+  `);
+
   const defaultAdminUsername = "PPC";
   const defaultAdminPassword = "pragya@123";
   const passwordHash = await bcrypt.hash(defaultAdminPassword, 10);

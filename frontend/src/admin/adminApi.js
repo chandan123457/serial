@@ -64,9 +64,16 @@ export function generateFpOperatorCodes(payload) {
   });
 }
 
-export function fetchFpOperatorCodesByOrder({ sectionKey, orderId }) {
-  const params = new URLSearchParams({ sectionKey, orderId });
+export function fetchFpOperatorCodesByOrder({ sectionKey, orderId, codeType = "fp" }) {
+  const params = new URLSearchParams({ sectionKey, orderId, codeType });
   return request(`/production/fp-codes?${params.toString()}`);
+}
+
+export function generateHpbOperatorCodes(payload) {
+  return request("/production/hpb-codes", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
 }
 
 export function updateOperatorCodeStatuses(payload) {

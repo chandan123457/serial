@@ -13,6 +13,14 @@ type GenerateFpCodesInput = {
 type GetFpCodesByOrderInput = {
   sectionKey: string;
   orderId: string;
+  codeType?: "fp" | "hpb";
+};
+
+type GenerateHpbCodesInput = {
+  sectionKey: string;
+  operatorNumber: string;
+  orderId: string;
+  rmCode: string;
 };
 
 function mapCodeRow(row: Record<string, unknown>) {
@@ -43,14 +51,142 @@ export async function getFpCodesByOrder(input: GetFpCodesByOrderInput) {
         rm_code AS "rmCode"
       FROM generated_operator_codes
       WHERE section_key = $1
-        AND code_type = 'fp'
-        AND order_id = $2
+        AND code_type = $2
+        AND order_id = $3
       ORDER BY serial ASC
     `,
-    [input.sectionKey, input.orderId]
+    [input.sectionKey, input.codeType ?? "fp", input.orderId]
   );
 
   return result.rows.map(mapCodeRow);
+}
+
+export async function generateHpbCodes(input: GenerateHpbCodesInput) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const existingHpbResult = await client.query(
+      `
+        SELECT id,
+          serial,
+          status,
+          operator_number AS "operatorNumber",
+          model_number_id AS "modelNumberId",
+          quantity,
+          TO_CHAR(manufacturing_date, 'YYYY-MM-DD') AS "manufacturingDate",
+          order_id AS "orderId",
+          rm_code AS "rmCode"
+        FROM generated_operator_codes
+        WHERE section_key = $1
+          AND code_type = 'hpb'
+          AND order_id = $2
+        ORDER BY serial ASC
+      `,
+      [input.sectionKey, input.orderId]
+    );
+
+    if (existingHpbResult.rows.length > 0) {
+      await client.query("COMMIT");
+      return { existing: true, codes: existingHpbResult.rows.map(mapCodeRow) };
+    }
+
+    const fpResult = await client.query(
+      `
+        SELECT serial,
+          model_number_id AS "modelNumberId",
+          quantity,
+          TO_CHAR(manufacturing_date, 'YYYY-MM-DD') AS "manufacturingDate",
+          order_id AS "orderId"
+        FROM generated_operator_codes
+        WHERE section_key = $1
+          AND code_type = 'fp'
+          AND order_id = $2
+        ORDER BY serial ASC
+      `,
+      [input.sectionKey, input.orderId]
+    );
+
+    if (fpResult.rows.length === 0) {
+      throw new Error("FP codes not found for this Order ID");
+    }
+
+    const firstFpCode = fpResult.rows[0];
+    const batchResult = await client.query(
+      `
+        INSERT INTO generated_code_batches (section_key, code_type, order_id)
+        VALUES ($1, 'hpb', $2)
+        ON CONFLICT (section_key, code_type, order_id) DO NOTHING
+        RETURNING id
+      `,
+      [input.sectionKey, input.orderId]
+    );
+
+    if (!batchResult.rows[0]) {
+      const codes = await getFpCodesByOrder({
+        sectionKey: input.sectionKey,
+        orderId: input.orderId,
+        codeType: "hpb"
+      });
+      await client.query("COMMIT");
+      return { existing: true, codes };
+    }
+
+    const batchId = batchResult.rows[0].id;
+    const codes = [];
+
+    for (const fpCode of fpResult.rows) {
+      const result = await client.query(
+        `
+          INSERT INTO generated_operator_codes (
+            batch_id,
+            serial,
+            section_key,
+            code_type,
+            operator_number,
+            model_number_id,
+            quantity,
+            manufacturing_date,
+            order_id,
+            rm_code,
+            status
+          )
+          VALUES ($1, $2, $3, 'hpb', $4, $5, $6, $7, $8, $9, NULL)
+          RETURNING id,
+            serial,
+            status,
+            operator_number AS "operatorNumber",
+            model_number_id AS "modelNumberId",
+            quantity,
+            TO_CHAR(manufacturing_date, 'YYYY-MM-DD') AS "manufacturingDate",
+            order_id AS "orderId",
+            rm_code AS "rmCode"
+        `,
+        [
+          batchId,
+          fpCode.serial,
+          input.sectionKey,
+          input.operatorNumber,
+          firstFpCode.modelNumberId,
+          firstFpCode.quantity,
+          firstFpCode.manufacturingDate,
+          input.orderId,
+          input.rmCode
+        ]
+      );
+
+      codes.push(mapCodeRow(result.rows[0]));
+    }
+
+    await client.query("COMMIT");
+    return { existing: false, codes };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function generateFpCodes(input: GenerateFpCodesInput) {

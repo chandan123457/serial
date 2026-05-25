@@ -1,11 +1,13 @@
 import type { Request, Response } from "express";
 import {
   generateFpCodesSchema,
+  generateHpbCodesSchema,
   getFpCodesByOrderSchema,
   updateCodeStatusesSchema
 } from "./production.schemas.js";
 import {
   generateFpCodes,
+  generateHpbCodes,
   getFpCodesByOrder,
   updateCodeStatuses
 } from "./production.service.js";
@@ -35,6 +37,17 @@ export async function getFpCodes(request: Request, response: Response) {
     const codes = await getFpCodesByOrder(payload);
 
     response.json({ exists: codes.length > 0, codes });
+  } catch (error) {
+    handleError(error, response);
+  }
+}
+
+export async function postGenerateHpbCodes(request: Request, response: Response) {
+  try {
+    const payload = generateHpbCodesSchema.parse(request.body);
+    const result = await generateHpbCodes(payload);
+
+    response.status(result.existing ? 200 : 201).json(result);
   } catch (error) {
     handleError(error, response);
   }

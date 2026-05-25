@@ -13,6 +13,7 @@ import {
   fetchFpOperatorCodesByOrder,
   fetchAdminBootstrap,
   generateFpOperatorCodes,
+  generateHpbOperatorCodes,
   updateOperatorCodeStatuses
 } from "../admin/adminApi";
 
@@ -36,6 +37,7 @@ function createInitialState() {
     aluminiumRmCode: "",
     fpCodes: [],
     copperTubeRmCode: "",
+    hpbCodes: [],
     hpbOperatorCode: "",
     productCount: "",
     lacingOperatorCode: "",
@@ -110,7 +112,7 @@ function ConfirmGenerateModal({ onClose, onConfirm }) {
   );
 }
 
-function FpCodesModal({ codes, onClose, onSave }) {
+function FpCodesModal({ title, codes, onClose, onSave }) {
   const [localCodes, setLocalCodes] = useState(codes);
 
   function setStatus(index, status) {
@@ -127,7 +129,7 @@ function FpCodesModal({ codes, onClose, onSave }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
       <div className="w-full max-w-[500px] overflow-hidden rounded-[14px] bg-white shadow-[0_24px_60px_rgba(17,39,89,0.22)]">
         <div className="flex items-center justify-between px-6 py-5">
-          <h3 className="text-[17px] font-extrabold text-[#172d63]">FP Operator Codes</h3>
+          <h3 className="text-[17px] font-extrabold text-[#172d63]">{title}</h3>
           <button type="button" onClick={onClose} className="text-[#97a1b3]">
             <X size={24} />
           </button>
@@ -219,7 +221,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
   const [modelNumbers, setModelNumbers] = useState([]);
   const [sectionState, setSectionState] = useState(initialSectionState);
   const [showGenerateConfirm, setShowGenerateConfirm] = useState(false);
-  const [showViewAllModal, setShowViewAllModal] = useState(false);
+  const [showViewAllModal, setShowViewAllModal] = useState(null);
   const [orderLookupLoading, setOrderLookupLoading] = useState(false);
 
   const currentSection = useMemo(
@@ -228,8 +230,13 @@ export default function ProductionDashboardPage({ session, onLogout }) {
   );
 
   const currentValues = sectionState[activeSection];
+  const isHpbOperator =
+    session?.user?.operatorType === "hpb" ||
+    session?.user?.operatorNumber?.toUpperCase().startsWith("HPB");
   const fpPreview = currentValues.fpCodes[0]?.value ?? "";
   const extraCodesCount = Math.max(currentValues.fpCodes.length - 1, 0);
+  const hpbPreview = currentValues.hpbCodes[0]?.value ?? "";
+  const hpbExtraCodesCount = Math.max(currentValues.hpbCodes.length - 1, 0);
   const hasRequiredInputParameters =
     currentValues.modelNumberId &&
     Number(currentValues.quantity) > 0 &&
@@ -238,9 +245,9 @@ export default function ProductionDashboardPage({ session, onLogout }) {
   const canGenerateCode =
     activeSection === "heat-exchanger" &&
     hasRequiredInputParameters &&
-    currentValues.aluminiumRmCode.trim() &&
+    (isHpbOperator ? currentValues.copperTubeRmCode.trim() : currentValues.aluminiumRmCode.trim()) &&
     session?.user?.operatorNumber &&
-    currentValues.fpCodes.length === 0 &&
+    (isHpbOperator ? currentValues.hpbCodes.length === 0 : currentValues.fpCodes.length === 0) &&
     !orderLookupLoading;
 
   useEffect(() => {
@@ -277,6 +284,28 @@ export default function ProductionDashboardPage({ session, onLogout }) {
 
         const firstCode = response.codes[0];
 
+        let hpbCodes = [];
+        if (isHpbOperator) {
+          const hpbResponse = await fetchFpOperatorCodesByOrder({
+            sectionKey: activeSection,
+            orderId: currentValues.orderId.trim(),
+            codeType: "hpb"
+          });
+
+          hpbCodes = hpbResponse.exists
+            ? hpbResponse.codes.map((code) => ({
+                id: code.id,
+                serial: Number(code.serial),
+                value: buildFpCodeValue(
+                  code.operatorNumber,
+                  code.manufacturingDate,
+                  Number(code.serial)
+                ),
+                status: code.status
+              }))
+            : [];
+        }
+
         setSectionState((current) => ({
           ...current,
           [activeSection]: {
@@ -286,6 +315,8 @@ export default function ProductionDashboardPage({ session, onLogout }) {
             dateOfManufacturing: firstCode.manufacturingDate ?? "",
             orderId: firstCode.orderId ?? current[activeSection].orderId,
             aluminiumRmCode: firstCode.rmCode ?? "",
+            copperTubeRmCode: hpbCodes[0]?.rmCode ?? "",
+            hpbCodes,
             fpCodes: response.codes.map((code) => ({
               id: code.id,
               serial: Number(code.serial),
@@ -313,7 +344,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
       ignore = true;
       window.clearTimeout(lookupTimer);
     };
-  }, [activeSection, currentValues.orderId]);
+  }, [activeSection, currentValues.orderId, isHpbOperator]);
 
   function updateField(field, value) {
     setSectionState((current) => ({
@@ -322,22 +353,29 @@ export default function ProductionDashboardPage({ session, onLogout }) {
         ...current[activeSection],
         [field]: value,
         ...(field === "orderId" && current[activeSection].orderId !== value
-          ? { fpCodes: [] }
+          ? { fpCodes: [], hpbCodes: [] }
           : {})
       }
     }));
   }
 
   async function handleGenerateConfirm() {
-    const response = await generateFpOperatorCodes({
-      sectionKey: activeSection,
-      operatorNumber: session.user.operatorNumber,
-      modelNumberId: currentValues.modelNumberId,
-      quantity: Number(currentValues.quantity),
-      manufacturingDate: currentValues.dateOfManufacturing,
-      orderId: currentValues.orderId,
-      rmCode: currentValues.aluminiumRmCode
-    });
+    const response = isHpbOperator
+      ? await generateHpbOperatorCodes({
+          sectionKey: activeSection,
+          operatorNumber: session.user.operatorNumber,
+          orderId: currentValues.orderId,
+          rmCode: currentValues.copperTubeRmCode
+        })
+      : await generateFpOperatorCodes({
+          sectionKey: activeSection,
+          operatorNumber: session.user.operatorNumber,
+          modelNumberId: currentValues.modelNumberId,
+          quantity: Number(currentValues.quantity),
+          manufacturingDate: currentValues.dateOfManufacturing,
+          orderId: currentValues.orderId,
+          rmCode: currentValues.aluminiumRmCode
+        });
 
     const nextCodes = response.codes.map((code) => ({
       id: code.id,
@@ -354,7 +392,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
       ...current,
       [activeSection]: {
         ...current[activeSection],
-        fpCodes: nextCodes
+        ...(isHpbOperator ? { hpbCodes: nextCodes } : { fpCodes: nextCodes })
       }
     }));
     setShowGenerateConfirm(false);
@@ -376,13 +414,22 @@ export default function ProductionDashboardPage({ session, onLogout }) {
       ...current,
       [activeSection]: {
         ...current[activeSection],
-        fpCodes: nextCodes.map((code) => ({
-          ...code,
-          status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status
-        }))
+        ...(showViewAllModal === "hpb"
+          ? {
+              hpbCodes: nextCodes.map((code) => ({
+                ...code,
+                status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status
+              }))
+            }
+          : {
+              fpCodes: nextCodes.map((code) => ({
+                ...code,
+                status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status
+              }))
+            })
       }
     }));
-    setShowViewAllModal(false);
+    setShowViewAllModal(null);
   }
 
   return (
@@ -460,7 +507,8 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     <select
                       value={currentValues.modelNumberId}
                       onChange={(event) => updateField("modelNumberId", event.target.value)}
-                      className="h-10 w-full appearance-none rounded-[8px] border border-[#d9dfec] bg-white pr-11 pl-[14px] text-[#173069] outline-none"
+                      disabled={isHpbOperator}
+                      className="h-10 w-full appearance-none rounded-[8px] border border-[#d9dfec] bg-white pr-11 pl-[14px] text-[#173069] outline-none disabled:bg-[#f8f9fc] disabled:text-[#7b879a]"
                     >
                       <option value="">Select Model Number</option>
                       {modelNumbers.map((model) => (
@@ -483,7 +531,8 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     min="1"
                     value={currentValues.quantity}
                     onChange={(event) => updateField("quantity", event.target.value)}
-                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none"
+                    disabled={isHpbOperator}
+                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none disabled:bg-[#f8f9fc] disabled:text-[#7b879a]"
                   />
                 </Field>
 
@@ -492,7 +541,8 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     type="date"
                     value={currentValues.dateOfManufacturing}
                     onChange={(event) => updateField("dateOfManufacturing", event.target.value)}
-                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none"
+                    disabled={isHpbOperator}
+                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none disabled:bg-[#f8f9fc] disabled:text-[#7b879a]"
                   />
                 </Field>
 
@@ -517,7 +567,8 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     type="text"
                     value={currentValues.aluminiumRmCode}
                     onChange={(event) => updateField("aluminiumRmCode", event.target.value)}
-                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none"
+                    disabled={isHpbOperator}
+                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none disabled:bg-[#f8f9fc] disabled:text-[#9aa4b5]"
                   />
                 </Field>
 
@@ -527,7 +578,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     currentValues.fpCodes.length > 0 ? (
                       <button
                         type="button"
-                        onClick={() => setShowViewAllModal(true)}
+                        onClick={() => setShowViewAllModal("fp")}
                         className="text-[13px] font-bold text-[#0d255f]"
                       >
                         View All
@@ -540,7 +591,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     {extraCodesCount > 0 ? (
                       <button
                         type="button"
-                        onClick={() => setShowViewAllModal(true)}
+                        onClick={() => setShowViewAllModal("fp")}
                         className="text-[13px] font-bold text-[#6675ff]"
                       >
                         + {extraCodesCount} More
@@ -555,18 +606,39 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     value={currentValues.copperTubeRmCode}
                     onChange={(event) => updateField("copperTubeRmCode", event.target.value)}
                     placeholder="Enter RM Code"
-                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none placeholder:text-[#c4ccda]"
+                    disabled={!isHpbOperator}
+                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none placeholder:text-[#c4ccda] disabled:bg-[#f8f9fc] disabled:text-[#9aa4b5]"
                   />
                 </Field>
 
-                <Field label="HPB operator code">
-                  <input
-                    type="text"
-                    value={currentValues.hpbOperatorCode}
-                    onChange={(event) => updateField("hpbOperatorCode", event.target.value)}
-                    placeholder="Operator Code"
-                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-[#fbfcff] px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6]"
-                  />
+                <Field
+                  label="HPB operator code"
+                  extra={
+                    currentValues.hpbCodes.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowViewAllModal("hpb")}
+                        className="text-[13px] font-bold text-[#0d255f]"
+                      >
+                        View All
+                      </button>
+                    ) : null
+                  }
+                >
+                  <div className="flex h-10 items-center justify-between rounded-[8px] border border-[#d9dfec] bg-[#fdfefe] px-[14px] text-[#173069]">
+                    <span className={hpbPreview ? "" : "text-[#c4ccda]"}>
+                      {hpbPreview || "Operator Code"}
+                    </span>
+                    {hpbExtraCodesCount > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowViewAllModal("hpb")}
+                        className="text-[13px] font-bold text-[#6675ff]"
+                      >
+                        + {hpbExtraCodesCount} More
+                      </button>
+                    ) : null}
+                  </div>
                 </Field>
 
                 <Field label="Product count">
@@ -575,7 +647,8 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     value={currentValues.productCount}
                     onChange={(event) => updateField("productCount", event.target.value)}
                     placeholder="Enter Product count"
-                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6]"
+                    disabled={isHpbOperator}
+                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6] disabled:bg-[#f8f9fc]"
                   />
                 </Field>
 
@@ -585,6 +658,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     value={currentValues.lacingOperatorCode}
                     onChange={(event) => updateField("lacingOperatorCode", event.target.value)}
                     placeholder="Operator Code"
+                    disabled={isHpbOperator}
                     className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-[#fbfcff] px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6]"
                   />
                 </Field>
@@ -595,6 +669,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     value={currentValues.expansionOperatorCode}
                     onChange={(event) => updateField("expansionOperatorCode", event.target.value)}
                     placeholder="Operator Code"
+                    disabled={isHpbOperator}
                     className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-[#fbfcff] px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6]"
                   />
                 </Field>
@@ -605,6 +680,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     value={currentValues.brazerName}
                     onChange={(event) => updateField("brazerName", event.target.value)}
                     placeholder="Operator Code"
+                    disabled={isHpbOperator}
                     className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-[#fbfcff] px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6]"
                   />
                 </Field>
@@ -615,6 +691,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     value={currentValues.leakTestingOperatorCode}
                     onChange={(event) => updateField("leakTestingOperatorCode", event.target.value)}
                     placeholder="Operator Code"
+                    disabled={isHpbOperator}
                     className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-[#fbfcff] px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6]"
                   />
                 </Field>
@@ -624,7 +701,8 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     <select
                       value={currentValues.packingType}
                       onChange={(event) => updateField("packingType", event.target.value)}
-                      className="h-10 w-full appearance-none rounded-[8px] border border-[#d9dfec] bg-white pr-11 pl-[14px] text-[#173069] outline-none"
+                      disabled={isHpbOperator}
+                      className="h-10 w-full appearance-none rounded-[8px] border border-[#d9dfec] bg-white pr-11 pl-[14px] text-[#173069] outline-none disabled:bg-[#f8f9fc]"
                     >
                       <option value="">Select Code</option>
                       <option value="Box">Box</option>
@@ -644,6 +722,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     value={currentValues.packerName}
                     onChange={(event) => updateField("packerName", event.target.value)}
                     placeholder="Operator Code"
+                    disabled={isHpbOperator}
                     className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-[#fbfcff] px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6]"
                   />
                 </Field>
@@ -654,14 +733,16 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     value={currentValues.inspectionDoneBy}
                     onChange={(event) => updateField("inspectionDoneBy", event.target.value)}
                     placeholder="Enter packing"
-                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6]"
+                    disabled={isHpbOperator}
+                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6] disabled:bg-[#f8f9fc]"
                   />
                 </Field>
               </div>
 
               {activeSection === "heat-exchanger" &&
-              currentValues.aluminiumRmCode.trim() &&
-              currentValues.fpCodes.length === 0 ? (
+              (isHpbOperator
+                ? currentValues.copperTubeRmCode.trim() && currentValues.hpbCodes.length === 0
+                : currentValues.aluminiumRmCode.trim() && currentValues.fpCodes.length === 0) ? (
                 <div className="mt-12 flex justify-center">
                   <button
                     type="button"
@@ -686,10 +767,14 @@ export default function ProductionDashboardPage({ session, onLogout }) {
         />
       ) : null}
 
-      {showViewAllModal && currentValues.fpCodes.length > 0 ? (
+      {showViewAllModal &&
+      (showViewAllModal === "hpb"
+        ? currentValues.hpbCodes.length > 0
+        : currentValues.fpCodes.length > 0) ? (
         <FpCodesModal
-          codes={currentValues.fpCodes}
-          onClose={() => setShowViewAllModal(false)}
+          title={showViewAllModal === "hpb" ? "HPB Operator Codes" : "FP Operator Codes"}
+          codes={showViewAllModal === "hpb" ? currentValues.hpbCodes : currentValues.fpCodes}
+          onClose={() => setShowViewAllModal(null)}
           onSave={handleSaveStatuses}
         />
       ) : null}
