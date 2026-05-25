@@ -118,9 +118,18 @@ function ConfirmGenerateModal({ onClose, onConfirm }) {
 
 function FpCodesModal({ title, codes, lockResolvedStatuses = false, onClose, onSave }) {
   const [localCodes, setLocalCodes] = useState(codes);
+  const lockedCodeIds = useMemo(
+    () =>
+      new Set(
+        lockResolvedStatuses
+          ? codes.filter((code) => code.status).map((code) => code.id)
+          : []
+      ),
+    [codes, lockResolvedStatuses]
+  );
 
   function setStatus(index, status) {
-    if (lockResolvedStatuses && localCodes[index]?.status) {
+    if (lockedCodeIds.has(localCodes[index]?.id)) {
       return;
     }
 
@@ -156,7 +165,7 @@ function FpCodesModal({ title, codes, lockResolvedStatuses = false, onClose, onS
             </thead>
             <tbody>
               {localCodes.map((code, index) => {
-                const isLocked = lockResolvedStatuses && code.status;
+                const isLocked = lockedCodeIds.has(code.id);
 
                 return (
                   <tr key={code.value} className="border-b border-[#edf2f8]">
