@@ -56,3 +56,22 @@ export function deleteModelNumber(id) {
     method: "DELETE"
   });
 }
+
+export function generateFpOperatorCodes(payload) {
+  return request("/production/fp-codes", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function fetchFpOperatorCodesByOrder({ sectionKey, orderId }) {
+  const params = new URLSearchParams({ sectionKey, orderId });
+  return request(`/production/fp-codes?${params.toString()}`);
+}
+
+export function updateOperatorCodeStatuses(payload) {
+  return request("/production/operator-codes/statuses", {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}

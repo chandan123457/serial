@@ -4,6 +4,7 @@ import { adminRouter } from "./admin/admin.routes.js";
 import { authRouter } from "./auth/auth.routes.js";
 import { initializeDatabase } from "./config/db.js";
 import { env } from "./config/env.js";
+import { productionRouter } from "./production/production.routes.js";
 
 const app = express();
 
@@ -20,6 +21,7 @@ app.get("/health", (_, response) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
+app.use("/api/production", productionRouter);
 
 initializeDatabase()
   .then(() => {
