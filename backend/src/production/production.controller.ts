@@ -3,6 +3,7 @@ import {
   generateBrazerCodesSchema,
   generateFpCodesSchema,
   generateHpbCodesSchema,
+  generateLeakTestingCodesSchema,
   getFpCodesByOrderSchema,
   updateCodeStatusesSchema
 } from "./production.schemas.js";
@@ -10,6 +11,7 @@ import {
   generateBrazerCodes,
   generateFpCodes,
   generateHpbCodes,
+  generateLeakTestingCodes,
   getFpCodesByOrder,
   updateCodeStatuses
 } from "./production.service.js";
@@ -59,6 +61,17 @@ export async function postGenerateBrazerCodes(request: Request, response: Respon
   try {
     const payload = generateBrazerCodesSchema.parse(request.body);
     const result = await generateBrazerCodes(payload);
+
+    response.status(result.existing ? 200 : 201).json(result);
+  } catch (error) {
+    handleError(error, response);
+  }
+}
+
+export async function postGenerateLeakTestingCodes(request: Request, response: Response) {
+  try {
+    const payload = generateLeakTestingCodesSchema.parse(request.body);
+    const result = await generateLeakTestingCodes(payload);
 
     response.status(result.existing ? 200 : 201).json(result);
   } catch (error) {

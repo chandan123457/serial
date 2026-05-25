@@ -13,7 +13,7 @@ type GenerateFpCodesInput = {
 type GetFpCodesByOrderInput = {
   sectionKey: string;
   orderId: string;
-  codeType?: "fp" | "hpb" | "br";
+  codeType?: "fp" | "hpb" | "br" | "lt";
 };
 
 type GenerateHpbCodesInput = {
@@ -24,8 +24,9 @@ type GenerateHpbCodesInput = {
 };
 
 type GenerateDerivedCodesInput = GenerateHpbCodesInput & {
-  sourceCodeType: "fp" | "hpb";
-  targetCodeType: "hpb" | "br";
+  sourceCodeType: "fp" | "hpb" | "br";
+  targetCodeType: "hpb" | "br" | "lt";
+  sourceStatus?: "approved";
 };
 
 function mapCodeRow(row: Record<string, unknown>) {
@@ -75,6 +76,7 @@ async function generateDerivedCodes(input: GenerateDerivedCodesInput) {
     const existingTargetResult = await client.query(
       `
         SELECT id,
+          batch_id AS "batchId",
           serial,
           status,
           operator_number AS "operatorNumber",
@@ -92,7 +94,7 @@ async function generateDerivedCodes(input: GenerateDerivedCodesInput) {
       [input.sectionKey, input.targetCodeType, input.orderId]
     );
 
-    if (existingTargetResult.rows.length > 0) {
+    if (existingTargetResult.rows.length > 0 && !input.sourceStatus) {
       await client.query("COMMIT");
       return { existing: true, codes: existingTargetResult.rows.map(mapCodeRow) };
     }
@@ -108,9 +110,10 @@ async function generateDerivedCodes(input: GenerateDerivedCodesInput) {
         WHERE section_key = $1
           AND code_type = $2
           AND order_id = $3
+          AND ($4::text IS NULL OR status = $4)
         ORDER BY serial ASC
       `,
-      [input.sectionKey, input.sourceCodeType, input.orderId]
+      [input.sectionKey, input.sourceCodeType, input.orderId, input.sourceStatus ?? null]
     );
 
     if (sourceResult.rows.length === 0) {
@@ -118,7 +121,9 @@ async function generateDerivedCodes(input: GenerateDerivedCodesInput) {
     }
 
     const firstSourceCode = sourceResult.rows[0];
-    const batchResult = await client.query(
+    const batchResult = existingTargetResult.rows[0]
+      ? { rows: [{ id: existingTargetResult.rows[0].batchId }] }
+      : await client.query(
       `
         INSERT INTO generated_code_batches (section_key, code_type, order_id)
         VALUES ($1, $2, $3)
@@ -139,9 +144,16 @@ async function generateDerivedCodes(input: GenerateDerivedCodesInput) {
     }
 
     const batchId = batchResult.rows[0].id;
-    const codes = [];
+    const existingSerials = new Set(
+      existingTargetResult.rows.map((code) => String(code.serial))
+    );
+    const codes = existingTargetResult.rows.map(mapCodeRow);
 
     for (const sourceCode of sourceResult.rows) {
+      if (existingSerials.has(String(sourceCode.serial))) {
+        continue;
+      }
+
       const result = await client.query(
         `
           INSERT INTO generated_operator_codes (
@@ -208,6 +220,15 @@ export async function generateBrazerCodes(input: GenerateHpbCodesInput) {
     ...input,
     sourceCodeType: "hpb",
     targetCodeType: "br"
+  });
+}
+
+export async function generateLeakTestingCodes(input: GenerateHpbCodesInput) {
+  return generateDerivedCodes({
+    ...input,
+    sourceCodeType: "br",
+    targetCodeType: "lt",
+    sourceStatus: "approved"
   });
 }
 

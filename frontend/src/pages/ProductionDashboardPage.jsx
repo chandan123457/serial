@@ -15,6 +15,7 @@ import {
   generateBrazerOperatorCodes,
   generateFpOperatorCodes,
   generateHpbOperatorCodes,
+  generateLeakTestingOperatorCodes,
   updateOperatorCodeStatuses
 } from "../admin/adminApi";
 
@@ -46,6 +47,7 @@ function createInitialState() {
     brazerName: "",
     brazerCodes: [],
     leakTestingOperatorCode: "",
+    leakTestingCodes: [],
     packingType: "",
     packerName: "",
     inspectionDoneBy: ""
@@ -114,10 +116,14 @@ function ConfirmGenerateModal({ onClose, onConfirm }) {
   );
 }
 
-function FpCodesModal({ title, codes, onClose, onSave }) {
+function FpCodesModal({ title, codes, lockResolvedStatuses = false, onClose, onSave }) {
   const [localCodes, setLocalCodes] = useState(codes);
 
   function setStatus(index, status) {
+    if (lockResolvedStatuses && localCodes[index]?.status) {
+      return;
+    }
+
     setLocalCodes((current) =>
       current.map((item, itemIndex) =>
         itemIndex === index
@@ -149,34 +155,59 @@ function FpCodesModal({ title, codes, onClose, onSave }) {
               </tr>
             </thead>
             <tbody>
-              {localCodes.map((code, index) => (
-                <tr key={code.value} className="border-b border-[#edf2f8]">
-                  <td className="px-4 py-4 text-[15px] text-[#24385b]">{index + 1}</td>
-                  <td className="px-4 py-4 text-[15px] text-[#24385b]">{code.value}</td>
-                  <td className="px-4 py-4 text-center">
-                    <button type="button" onClick={() => setStatus(index, "approved")}>
-                      {code.status === "approved" ? (
-                        <span className="grid h-6 w-6 place-items-center rounded-full bg-[#0fc65b] text-white">
-                          <Check size={14} />
+              {localCodes.map((code, index) => {
+                const isLocked = lockResolvedStatuses && code.status;
+
+                return (
+                  <tr key={code.value} className="border-b border-[#edf2f8]">
+                    <td className="px-4 py-4 text-[15px] text-[#24385b]">{index + 1}</td>
+                    <td className="px-4 py-4 text-[15px] text-[#24385b]">{code.value}</td>
+                    {isLocked ? (
+                      <td className="px-4 py-4 text-center" colSpan={2}>
+                        <span
+                          className={`inline-flex items-center gap-2 text-[13px] font-bold ${
+                            code.status === "approved" ? "text-[#0fc65b]" : "text-[#ff1654]"
+                          }`}
+                        >
+                          <span
+                            className={`grid h-6 w-6 place-items-center rounded-full text-white ${
+                              code.status === "approved" ? "bg-[#0fc65b]" : "bg-[#ff1654]"
+                            }`}
+                          >
+                            {code.status === "approved" ? <Check size={14} /> : <X size={14} />}
+                          </span>
+                          {code.status === "approved" ? "Approved" : "Rejected"}
                         </span>
-                      ) : (
-                        <Circle size={24} className="text-[#b7c2d4]" />
-                      )}
-                    </button>
-                  </td>
-                  <td className="px-4 py-4 text-center">
-                    <button type="button" onClick={() => setStatus(index, "rejected")}>
-                      {code.status === "rejected" ? (
-                        <span className="grid h-6 w-6 place-items-center rounded-full bg-[#ff1654] text-white">
-                          <X size={14} />
-                        </span>
-                      ) : (
-                        <Circle size={24} className="text-[#b7c2d4]" />
-                      )}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                      </td>
+                    ) : (
+                      <>
+                        <td className="px-4 py-4 text-center">
+                          <button type="button" onClick={() => setStatus(index, "approved")}>
+                            {code.status === "approved" ? (
+                              <span className="grid h-6 w-6 place-items-center rounded-full bg-[#0fc65b] text-white">
+                                <Check size={14} />
+                              </span>
+                            ) : (
+                              <Circle size={24} className="text-[#b7c2d4]" />
+                            )}
+                          </button>
+                        </td>
+                        <td className="px-4 py-4 text-center">
+                          <button type="button" onClick={() => setStatus(index, "rejected")}>
+                            {code.status === "rejected" ? (
+                              <span className="grid h-6 w-6 place-items-center rounded-full bg-[#ff1654] text-white">
+                                <X size={14} />
+                              </span>
+                            ) : (
+                              <Circle size={24} className="text-[#b7c2d4]" />
+                            )}
+                          </button>
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
 
@@ -206,7 +237,7 @@ function getDateCodeParts(dateValue) {
 }
 
 function getOperatorCodePrefix(operatorNumber, codeType) {
-  if (codeType === "br") {
+  if (codeType === "br" || codeType === "lt") {
     return operatorNumber.split("-")[0] ?? operatorNumber;
   }
 
@@ -246,39 +277,60 @@ export default function ProductionDashboardPage({ session, onLogout }) {
   const isBrazerOperator =
     session?.user?.operatorType === "br" ||
     session?.user?.operatorNumber?.toUpperCase().startsWith("BR");
-  const isDerivedOperator = isHpbOperator || isBrazerOperator;
+  const isLeakTestingOperator =
+    session?.user?.operatorType === "lt" ||
+    session?.user?.operatorNumber?.toUpperCase().startsWith("LT");
+  const isDerivedOperator = isHpbOperator || isBrazerOperator || isLeakTestingOperator;
   const fpPreview = currentValues.fpCodes[0]?.value ?? "";
   const extraCodesCount = Math.max(currentValues.fpCodes.length - 1, 0);
   const hpbPreview = currentValues.hpbCodes[0]?.value ?? "";
   const hpbExtraCodesCount = Math.max(currentValues.hpbCodes.length - 1, 0);
   const brazerPreview = currentValues.brazerCodes[0]?.value ?? "";
   const brazerExtraCodesCount = Math.max(currentValues.brazerCodes.length - 1, 0);
+  const leakTestingPreview = currentValues.leakTestingCodes[0]?.value ?? "";
+  const leakTestingExtraCodesCount = Math.max(currentValues.leakTestingCodes.length - 1, 0);
+  const approvedBrazerCodesCount = currentValues.brazerCodes.filter(
+    (code) => code.status === "approved"
+  ).length;
+  const hasMissingLeakTestingCodes = currentValues.brazerCodes.some(
+    (code) =>
+      code.status === "approved" &&
+      !currentValues.leakTestingCodes.some(
+        (leakTestingCode) => leakTestingCode.serial === code.serial
+      )
+  );
   const hasRequiredInputParameters =
     currentValues.modelNumberId &&
     Number(currentValues.quantity) > 0 &&
     currentValues.dateOfManufacturing &&
     currentValues.orderId.trim();
-  const activeStageValue = isBrazerOperator
-    ? currentValues.brazerName.trim()
-    : isHpbOperator
-      ? currentValues.copperTubeRmCode.trim()
-      : currentValues.aluminiumRmCode.trim();
-  const activeStageCodes = isBrazerOperator
-    ? currentValues.brazerCodes
-    : isHpbOperator
-      ? currentValues.hpbCodes
-      : currentValues.fpCodes;
-  const hasRequiredPreviousStage = isBrazerOperator
-    ? currentValues.hpbCodes.length > 0
-    : isHpbOperator
-      ? currentValues.fpCodes.length > 0
-      : true;
+  const activeStageValue = isLeakTestingOperator
+    ? approvedBrazerCodesCount > 0
+    : isBrazerOperator
+      ? currentValues.hpbCodes.length > 0
+      : isHpbOperator
+        ? currentValues.copperTubeRmCode.trim()
+        : currentValues.aluminiumRmCode.trim();
+  const activeStageCodes = isLeakTestingOperator
+    ? currentValues.leakTestingCodes
+    : isBrazerOperator
+      ? currentValues.brazerCodes
+      : isHpbOperator
+        ? currentValues.hpbCodes
+        : currentValues.fpCodes;
+  const hasRequiredPreviousStage = isLeakTestingOperator
+    ? approvedBrazerCodesCount > 0
+    : isBrazerOperator
+      ? currentValues.hpbCodes.length > 0
+      : isHpbOperator
+        ? currentValues.fpCodes.length > 0
+        : true;
   const canGenerateCode =
     activeSection === "heat-exchanger" &&
     hasRequiredInputParameters &&
     activeStageValue &&
     session?.user?.operatorNumber &&
-    activeStageCodes.length === 0 &&
+    (isLeakTestingOperator ? hasMissingLeakTestingCodes : activeStageCodes.length === 0) &&
     hasRequiredPreviousStage &&
     !orderLookupLoading;
 
@@ -343,7 +395,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
         }
 
         let brazerCodes = [];
-        if (isBrazerOperator) {
+        if (isBrazerOperator || isLeakTestingOperator) {
           const brazerResponse = await fetchFpOperatorCodesByOrder({
             sectionKey: activeSection,
             orderId: currentValues.orderId.trim(),
@@ -366,6 +418,30 @@ export default function ProductionDashboardPage({ session, onLogout }) {
             : [];
         }
 
+        let leakTestingCodes = [];
+        if (isLeakTestingOperator) {
+          const leakTestingResponse = await fetchFpOperatorCodesByOrder({
+            sectionKey: activeSection,
+            orderId: currentValues.orderId.trim(),
+            codeType: "lt"
+          });
+
+          leakTestingCodes = leakTestingResponse.exists
+            ? leakTestingResponse.codes.map((code) => ({
+                id: code.id,
+                serial: Number(code.serial),
+                value: buildOperatorCodeValue(
+                  code.operatorNumber,
+                  code.manufacturingDate,
+                  Number(code.serial),
+                  "lt"
+                ),
+                status: code.status,
+                rmCode: code.rmCode
+              }))
+            : [];
+        }
+
         setSectionState((current) => ({
           ...current,
           [activeSection]: {
@@ -379,6 +455,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
             brazerName: brazerCodes[0]?.rmCode ?? "",
             hpbCodes,
             brazerCodes,
+            leakTestingCodes,
             fpCodes: response.codes.map((code) => ({
               id: code.id,
               serial: Number(code.serial),
@@ -408,7 +485,13 @@ export default function ProductionDashboardPage({ session, onLogout }) {
       ignore = true;
       window.clearTimeout(lookupTimer);
     };
-  }, [activeSection, currentValues.orderId, isDerivedOperator, isBrazerOperator]);
+  }, [
+    activeSection,
+    currentValues.orderId,
+    isDerivedOperator,
+    isBrazerOperator,
+    isLeakTestingOperator
+  ]);
 
   function updateField(field, value) {
     setSectionState((current) => ({
@@ -417,19 +500,26 @@ export default function ProductionDashboardPage({ session, onLogout }) {
         ...current[activeSection],
         [field]: value,
         ...(field === "orderId" && current[activeSection].orderId !== value
-          ? { fpCodes: [], hpbCodes: [], brazerCodes: [] }
+          ? { fpCodes: [], hpbCodes: [], brazerCodes: [], leakTestingCodes: [] }
           : {})
       }
     }));
   }
 
   async function handleGenerateConfirm() {
-    const response = isBrazerOperator
+    const response = isLeakTestingOperator
+      ? await generateLeakTestingOperatorCodes({
+          sectionKey: activeSection,
+          operatorNumber: session.user.operatorNumber,
+          orderId: currentValues.orderId,
+          rmCode: session.user.username || session.user.operatorNumber
+        })
+      : isBrazerOperator
       ? await generateBrazerOperatorCodes({
           sectionKey: activeSection,
           operatorNumber: session.user.operatorNumber,
           orderId: currentValues.orderId,
-          rmCode: currentValues.brazerName
+          rmCode: currentValues.brazerName || session.user.username || session.user.operatorNumber
         })
       : isHpbOperator
         ? await generateHpbOperatorCodes({
@@ -455,7 +545,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
         code.operatorNumber,
         code.manufacturingDate,
         Number(code.serial),
-        isBrazerOperator ? "br" : isHpbOperator ? "hpb" : "fp"
+        isLeakTestingOperator ? "lt" : isBrazerOperator ? "br" : isHpbOperator ? "hpb" : "fp"
       ),
       status: code.status,
       rmCode: code.rmCode
@@ -465,11 +555,13 @@ export default function ProductionDashboardPage({ session, onLogout }) {
       ...current,
       [activeSection]: {
         ...current[activeSection],
-        ...(isBrazerOperator
-          ? { brazerCodes: nextCodes }
-          : isHpbOperator
-            ? { hpbCodes: nextCodes }
-            : { fpCodes: nextCodes })
+        ...(isLeakTestingOperator
+          ? { leakTestingCodes: nextCodes }
+          : isBrazerOperator
+            ? { brazerCodes: nextCodes }
+            : isHpbOperator
+              ? { hpbCodes: nextCodes }
+              : { fpCodes: nextCodes })
       }
     }));
     setShowGenerateConfirm(false);
@@ -501,6 +593,13 @@ export default function ProductionDashboardPage({ session, onLogout }) {
           : showViewAllModal === "br"
             ? {
                 brazerCodes: nextCodes.map((code) => ({
+                  ...code,
+                  status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status
+                }))
+              }
+          : showViewAllModal === "lt"
+            ? {
+                leakTestingCodes: nextCodes.map((code) => ({
                   ...code,
                   status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status
                 }))
@@ -772,7 +871,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     ) : null
                   }
                 >
-                  {isBrazerOperator && currentValues.brazerCodes.length > 0 ? (
+                  {currentValues.brazerCodes.length > 0 ? (
                     <div className="flex h-10 items-center justify-between rounded-[8px] border border-[#d9dfec] bg-[#fdfefe] px-[14px] text-[#173069]">
                       <span>{brazerPreview}</span>
                       {brazerExtraCodesCount > 0 ? (
@@ -791,21 +890,49 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                       value={currentValues.brazerName}
                       onChange={(event) => updateField("brazerName", event.target.value)}
                       placeholder="Operator Code"
-                      disabled={isHpbOperator}
+                      disabled={isDerivedOperator}
                       className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-[#fbfcff] px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6] disabled:bg-[#f8f9fc]"
                     />
                   )}
                 </Field>
 
-                <Field label="Leak Testing Operator Code">
-                  <input
-                    type="text"
-                    value={currentValues.leakTestingOperatorCode}
-                    onChange={(event) => updateField("leakTestingOperatorCode", event.target.value)}
-                    placeholder="Operator Code"
-                    disabled={isDerivedOperator}
-                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-[#fbfcff] px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6]"
-                  />
+                <Field
+                  label="Leak Testing Operator Code"
+                  extra={
+                    currentValues.leakTestingCodes.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowViewAllModal("lt")}
+                        className="text-[13px] font-bold text-[#0d255f]"
+                      >
+                        View All
+                      </button>
+                    ) : null
+                  }
+                >
+                  {currentValues.leakTestingCodes.length > 0 ? (
+                    <div className="flex h-10 items-center justify-between rounded-[8px] border border-[#d9dfec] bg-[#fdfefe] px-[14px] text-[#173069]">
+                      <span>{leakTestingPreview}</span>
+                      {leakTestingExtraCodesCount > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setShowViewAllModal("lt")}
+                          className="text-[13px] font-bold text-[#6675ff]"
+                        >
+                          + {leakTestingExtraCodesCount} More
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <input
+                      type="text"
+                      value={currentValues.leakTestingOperatorCode}
+                      onChange={(event) => updateField("leakTestingOperatorCode", event.target.value)}
+                      placeholder="Operator Code"
+                      disabled={isDerivedOperator}
+                      className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-[#fbfcff] px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6] disabled:bg-[#f8f9fc]"
+                    />
+                  )}
                 </Field>
 
                 <Field label="Types of packing">
@@ -853,7 +980,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
 
               {activeSection === "heat-exchanger" &&
               activeStageValue &&
-              activeStageCodes.length === 0 ? (
+              (isLeakTestingOperator ? hasMissingLeakTestingCodes : activeStageCodes.length === 0) ? (
                 <div className="mt-12 flex justify-center">
                   <button
                     type="button"
@@ -883,22 +1010,29 @@ export default function ProductionDashboardPage({ session, onLogout }) {
         ? currentValues.hpbCodes.length > 0
         : showViewAllModal === "br"
           ? currentValues.brazerCodes.length > 0
-          : currentValues.fpCodes.length > 0) ? (
+          : showViewAllModal === "lt"
+            ? currentValues.leakTestingCodes.length > 0
+            : currentValues.fpCodes.length > 0) ? (
         <FpCodesModal
           title={
             showViewAllModal === "hpb"
               ? "HPB Operator Codes"
               : showViewAllModal === "br"
                 ? "Brazer Operator Codes"
-                : "FP Operator Codes"
+                : showViewAllModal === "lt"
+                  ? "Leak Testing Operator Codes"
+                  : "FP Operator Codes"
           }
           codes={
             showViewAllModal === "hpb"
               ? currentValues.hpbCodes
               : showViewAllModal === "br"
                 ? currentValues.brazerCodes
-                : currentValues.fpCodes
+                : showViewAllModal === "lt"
+                  ? currentValues.leakTestingCodes
+                  : currentValues.fpCodes
           }
+          lockResolvedStatuses={showViewAllModal === "lt"}
           onClose={() => setShowViewAllModal(null)}
           onSave={handleSaveStatuses}
         />

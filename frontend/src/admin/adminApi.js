@@ -83,6 +83,13 @@ export function generateBrazerOperatorCodes(payload) {
   });
 }
 
+export function generateLeakTestingOperatorCodes(payload) {
+  return request("/production/leak-testing-codes", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
 export function updateOperatorCodeStatuses(payload) {
   return request("/production/operator-codes/statuses", {
     method: "PATCH",
