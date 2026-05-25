@@ -13,7 +13,7 @@ type GenerateFpCodesInput = {
 type GetFpCodesByOrderInput = {
   sectionKey: string;
   orderId: string;
-  codeType?: "fp" | "hpb";
+  codeType?: "fp" | "hpb" | "br";
 };
 
 type GenerateHpbCodesInput = {
@@ -21,6 +21,11 @@ type GenerateHpbCodesInput = {
   operatorNumber: string;
   orderId: string;
   rmCode: string;
+};
+
+type GenerateDerivedCodesInput = GenerateHpbCodesInput & {
+  sourceCodeType: "fp" | "hpb";
+  targetCodeType: "hpb" | "br";
 };
 
 function mapCodeRow(row: Record<string, unknown>) {
@@ -61,13 +66,13 @@ export async function getFpCodesByOrder(input: GetFpCodesByOrderInput) {
   return result.rows.map(mapCodeRow);
 }
 
-export async function generateHpbCodes(input: GenerateHpbCodesInput) {
+async function generateDerivedCodes(input: GenerateDerivedCodesInput) {
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    const existingHpbResult = await client.query(
+    const existingTargetResult = await client.query(
       `
         SELECT id,
           serial,
@@ -80,19 +85,19 @@ export async function generateHpbCodes(input: GenerateHpbCodesInput) {
           rm_code AS "rmCode"
         FROM generated_operator_codes
         WHERE section_key = $1
-          AND code_type = 'hpb'
-          AND order_id = $2
+          AND code_type = $2
+          AND order_id = $3
         ORDER BY serial ASC
       `,
-      [input.sectionKey, input.orderId]
+      [input.sectionKey, input.targetCodeType, input.orderId]
     );
 
-    if (existingHpbResult.rows.length > 0) {
+    if (existingTargetResult.rows.length > 0) {
       await client.query("COMMIT");
-      return { existing: true, codes: existingHpbResult.rows.map(mapCodeRow) };
+      return { existing: true, codes: existingTargetResult.rows.map(mapCodeRow) };
     }
 
-    const fpResult = await client.query(
+    const sourceResult = await client.query(
       `
         SELECT serial,
           model_number_id AS "modelNumberId",
@@ -101,33 +106,33 @@ export async function generateHpbCodes(input: GenerateHpbCodesInput) {
           order_id AS "orderId"
         FROM generated_operator_codes
         WHERE section_key = $1
-          AND code_type = 'fp'
-          AND order_id = $2
+          AND code_type = $2
+          AND order_id = $3
         ORDER BY serial ASC
       `,
-      [input.sectionKey, input.orderId]
+      [input.sectionKey, input.sourceCodeType, input.orderId]
     );
 
-    if (fpResult.rows.length === 0) {
-      throw new Error("FP codes not found for this Order ID");
+    if (sourceResult.rows.length === 0) {
+      throw new Error(`${input.sourceCodeType.toUpperCase()} codes not found for this Order ID`);
     }
 
-    const firstFpCode = fpResult.rows[0];
+    const firstSourceCode = sourceResult.rows[0];
     const batchResult = await client.query(
       `
         INSERT INTO generated_code_batches (section_key, code_type, order_id)
-        VALUES ($1, 'hpb', $2)
+        VALUES ($1, $2, $3)
         ON CONFLICT (section_key, code_type, order_id) DO NOTHING
         RETURNING id
       `,
-      [input.sectionKey, input.orderId]
+      [input.sectionKey, input.targetCodeType, input.orderId]
     );
 
     if (!batchResult.rows[0]) {
       const codes = await getFpCodesByOrder({
         sectionKey: input.sectionKey,
         orderId: input.orderId,
-        codeType: "hpb"
+        codeType: input.targetCodeType
       });
       await client.query("COMMIT");
       return { existing: true, codes };
@@ -136,7 +141,7 @@ export async function generateHpbCodes(input: GenerateHpbCodesInput) {
     const batchId = batchResult.rows[0].id;
     const codes = [];
 
-    for (const fpCode of fpResult.rows) {
+    for (const sourceCode of sourceResult.rows) {
       const result = await client.query(
         `
           INSERT INTO generated_operator_codes (
@@ -152,7 +157,7 @@ export async function generateHpbCodes(input: GenerateHpbCodesInput) {
             rm_code,
             status
           )
-          VALUES ($1, $2, $3, 'hpb', $4, $5, $6, $7, $8, $9, NULL)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL)
           RETURNING id,
             serial,
             status,
@@ -165,12 +170,13 @@ export async function generateHpbCodes(input: GenerateHpbCodesInput) {
         `,
         [
           batchId,
-          fpCode.serial,
+          sourceCode.serial,
           input.sectionKey,
+          input.targetCodeType,
           input.operatorNumber,
-          firstFpCode.modelNumberId,
-          firstFpCode.quantity,
-          firstFpCode.manufacturingDate,
+          firstSourceCode.modelNumberId,
+          firstSourceCode.quantity,
+          firstSourceCode.manufacturingDate,
           input.orderId,
           input.rmCode
         ]
@@ -187,6 +193,22 @@ export async function generateHpbCodes(input: GenerateHpbCodesInput) {
   } finally {
     client.release();
   }
+}
+
+export async function generateHpbCodes(input: GenerateHpbCodesInput) {
+  return generateDerivedCodes({
+    ...input,
+    sourceCodeType: "fp",
+    targetCodeType: "hpb"
+  });
+}
+
+export async function generateBrazerCodes(input: GenerateHpbCodesInput) {
+  return generateDerivedCodes({
+    ...input,
+    sourceCodeType: "hpb",
+    targetCodeType: "br"
+  });
 }
 
 export async function generateFpCodes(input: GenerateFpCodesInput) {

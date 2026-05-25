@@ -1,11 +1,13 @@
 import type { Request, Response } from "express";
 import {
+  generateBrazerCodesSchema,
   generateFpCodesSchema,
   generateHpbCodesSchema,
   getFpCodesByOrderSchema,
   updateCodeStatusesSchema
 } from "./production.schemas.js";
 import {
+  generateBrazerCodes,
   generateFpCodes,
   generateHpbCodes,
   getFpCodesByOrder,
@@ -46,6 +48,17 @@ export async function postGenerateHpbCodes(request: Request, response: Response)
   try {
     const payload = generateHpbCodesSchema.parse(request.body);
     const result = await generateHpbCodes(payload);
+
+    response.status(result.existing ? 200 : 201).json(result);
+  } catch (error) {
+    handleError(error, response);
+  }
+}
+
+export async function postGenerateBrazerCodes(request: Request, response: Response) {
+  try {
+    const payload = generateBrazerCodesSchema.parse(request.body);
+    const result = await generateBrazerCodes(payload);
 
     response.status(result.existing ? 200 : 201).json(result);
   } catch (error) {

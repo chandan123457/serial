@@ -17,10 +17,17 @@ export const generateHpbCodesSchema = z.object({
   rmCode: z.string().trim().min(1)
 });
 
+export const generateBrazerCodesSchema = z.object({
+  sectionKey: z.string().min(1),
+  operatorNumber: z.string().min(1),
+  orderId: z.string().trim().min(1),
+  rmCode: z.string().trim().min(1)
+});
+
 export const getFpCodesByOrderSchema = z.object({
   sectionKey: z.string().min(1),
   orderId: z.string().trim().min(1),
-  codeType: z.enum(["fp", "hpb"]).default("fp")
+  codeType: z.enum(["fp", "hpb", "br"]).default("fp")
 });
 
 export const updateCodeStatusesSchema = z.object({

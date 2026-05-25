@@ -12,6 +12,7 @@ import {
 import {
   fetchFpOperatorCodesByOrder,
   fetchAdminBootstrap,
+  generateBrazerOperatorCodes,
   generateFpOperatorCodes,
   generateHpbOperatorCodes,
   updateOperatorCodeStatuses
@@ -43,6 +44,7 @@ function createInitialState() {
     lacingOperatorCode: "",
     expansionOperatorCode: "",
     brazerName: "",
+    brazerCodes: [],
     leakTestingOperatorCode: "",
     packingType: "",
     packerName: "",
@@ -203,8 +205,16 @@ function getDateCodeParts(dateValue) {
   return { day, month, year };
 }
 
-function buildFpCodeValue(operatorNumber, dateValue, serial) {
-  const operatorPrefix = operatorNumber.replace("-", "");
+function getOperatorCodePrefix(operatorNumber, codeType) {
+  if (codeType === "br") {
+    return operatorNumber.split("-")[0] ?? operatorNumber;
+  }
+
+  return operatorNumber.replace("-", "");
+}
+
+function buildOperatorCodeValue(operatorNumber, dateValue, serial, codeType = "fp") {
+  const operatorPrefix = getOperatorCodePrefix(operatorNumber, codeType);
   const dateParts = getDateCodeParts(dateValue);
   const formattedDate = fpCodeFormat.dateParts
     .map((part) => dateParts[part])
@@ -233,21 +243,43 @@ export default function ProductionDashboardPage({ session, onLogout }) {
   const isHpbOperator =
     session?.user?.operatorType === "hpb" ||
     session?.user?.operatorNumber?.toUpperCase().startsWith("HPB");
+  const isBrazerOperator =
+    session?.user?.operatorType === "br" ||
+    session?.user?.operatorNumber?.toUpperCase().startsWith("BR");
+  const isDerivedOperator = isHpbOperator || isBrazerOperator;
   const fpPreview = currentValues.fpCodes[0]?.value ?? "";
   const extraCodesCount = Math.max(currentValues.fpCodes.length - 1, 0);
   const hpbPreview = currentValues.hpbCodes[0]?.value ?? "";
   const hpbExtraCodesCount = Math.max(currentValues.hpbCodes.length - 1, 0);
+  const brazerPreview = currentValues.brazerCodes[0]?.value ?? "";
+  const brazerExtraCodesCount = Math.max(currentValues.brazerCodes.length - 1, 0);
   const hasRequiredInputParameters =
     currentValues.modelNumberId &&
     Number(currentValues.quantity) > 0 &&
     currentValues.dateOfManufacturing &&
     currentValues.orderId.trim();
+  const activeStageValue = isBrazerOperator
+    ? currentValues.brazerName.trim()
+    : isHpbOperator
+      ? currentValues.copperTubeRmCode.trim()
+      : currentValues.aluminiumRmCode.trim();
+  const activeStageCodes = isBrazerOperator
+    ? currentValues.brazerCodes
+    : isHpbOperator
+      ? currentValues.hpbCodes
+      : currentValues.fpCodes;
+  const hasRequiredPreviousStage = isBrazerOperator
+    ? currentValues.hpbCodes.length > 0
+    : isHpbOperator
+      ? currentValues.fpCodes.length > 0
+      : true;
   const canGenerateCode =
     activeSection === "heat-exchanger" &&
     hasRequiredInputParameters &&
-    (isHpbOperator ? currentValues.copperTubeRmCode.trim() : currentValues.aluminiumRmCode.trim()) &&
+    activeStageValue &&
     session?.user?.operatorNumber &&
-    (isHpbOperator ? currentValues.hpbCodes.length === 0 : currentValues.fpCodes.length === 0) &&
+    activeStageCodes.length === 0 &&
+    hasRequiredPreviousStage &&
     !orderLookupLoading;
 
   useEffect(() => {
@@ -285,23 +317,51 @@ export default function ProductionDashboardPage({ session, onLogout }) {
         const firstCode = response.codes[0];
 
         let hpbCodes = [];
-        if (isHpbOperator) {
+        let hpbRmCode = "";
+        if (isDerivedOperator) {
           const hpbResponse = await fetchFpOperatorCodesByOrder({
             sectionKey: activeSection,
             orderId: currentValues.orderId.trim(),
             codeType: "hpb"
           });
+          hpbRmCode = hpbResponse.codes?.[0]?.rmCode ?? "";
 
           hpbCodes = hpbResponse.exists
             ? hpbResponse.codes.map((code) => ({
                 id: code.id,
                 serial: Number(code.serial),
-                value: buildFpCodeValue(
+                value: buildOperatorCodeValue(
                   code.operatorNumber,
                   code.manufacturingDate,
-                  Number(code.serial)
+                  Number(code.serial),
+                  "hpb"
                 ),
-                status: code.status
+                status: code.status,
+                rmCode: code.rmCode
+              }))
+            : [];
+        }
+
+        let brazerCodes = [];
+        if (isBrazerOperator) {
+          const brazerResponse = await fetchFpOperatorCodesByOrder({
+            sectionKey: activeSection,
+            orderId: currentValues.orderId.trim(),
+            codeType: "br"
+          });
+
+          brazerCodes = brazerResponse.exists
+            ? brazerResponse.codes.map((code) => ({
+                id: code.id,
+                serial: Number(code.serial),
+                value: buildOperatorCodeValue(
+                  code.operatorNumber,
+                  code.manufacturingDate,
+                  Number(code.serial),
+                  "br"
+                ),
+                status: code.status,
+                rmCode: code.rmCode
               }))
             : [];
         }
@@ -315,17 +375,21 @@ export default function ProductionDashboardPage({ session, onLogout }) {
             dateOfManufacturing: firstCode.manufacturingDate ?? "",
             orderId: firstCode.orderId ?? current[activeSection].orderId,
             aluminiumRmCode: firstCode.rmCode ?? "",
-            copperTubeRmCode: hpbCodes[0]?.rmCode ?? "",
+            copperTubeRmCode: hpbRmCode,
+            brazerName: brazerCodes[0]?.rmCode ?? "",
             hpbCodes,
+            brazerCodes,
             fpCodes: response.codes.map((code) => ({
               id: code.id,
               serial: Number(code.serial),
-              value: buildFpCodeValue(
+              value: buildOperatorCodeValue(
                 code.operatorNumber,
                 code.manufacturingDate,
-                Number(code.serial)
+                Number(code.serial),
+                "fp"
               ),
-              status: code.status
+              status: code.status,
+              rmCode: code.rmCode
             }))
           }
         }));
@@ -344,7 +408,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
       ignore = true;
       window.clearTimeout(lookupTimer);
     };
-  }, [activeSection, currentValues.orderId, isHpbOperator]);
+  }, [activeSection, currentValues.orderId, isDerivedOperator, isBrazerOperator]);
 
   function updateField(field, value) {
     setSectionState((current) => ({
@@ -353,21 +417,28 @@ export default function ProductionDashboardPage({ session, onLogout }) {
         ...current[activeSection],
         [field]: value,
         ...(field === "orderId" && current[activeSection].orderId !== value
-          ? { fpCodes: [], hpbCodes: [] }
+          ? { fpCodes: [], hpbCodes: [], brazerCodes: [] }
           : {})
       }
     }));
   }
 
   async function handleGenerateConfirm() {
-    const response = isHpbOperator
-      ? await generateHpbOperatorCodes({
+    const response = isBrazerOperator
+      ? await generateBrazerOperatorCodes({
+          sectionKey: activeSection,
+          operatorNumber: session.user.operatorNumber,
+          orderId: currentValues.orderId,
+          rmCode: currentValues.brazerName
+        })
+      : isHpbOperator
+        ? await generateHpbOperatorCodes({
           sectionKey: activeSection,
           operatorNumber: session.user.operatorNumber,
           orderId: currentValues.orderId,
           rmCode: currentValues.copperTubeRmCode
         })
-      : await generateFpOperatorCodes({
+        : await generateFpOperatorCodes({
           sectionKey: activeSection,
           operatorNumber: session.user.operatorNumber,
           modelNumberId: currentValues.modelNumberId,
@@ -380,19 +451,25 @@ export default function ProductionDashboardPage({ session, onLogout }) {
     const nextCodes = response.codes.map((code) => ({
       id: code.id,
       serial: Number(code.serial),
-      value: buildFpCodeValue(
+      value: buildOperatorCodeValue(
         code.operatorNumber,
         code.manufacturingDate,
-        Number(code.serial)
+        Number(code.serial),
+        isBrazerOperator ? "br" : isHpbOperator ? "hpb" : "fp"
       ),
-      status: code.status
+      status: code.status,
+      rmCode: code.rmCode
     }));
 
     setSectionState((current) => ({
       ...current,
       [activeSection]: {
         ...current[activeSection],
-        ...(isHpbOperator ? { hpbCodes: nextCodes } : { fpCodes: nextCodes })
+        ...(isBrazerOperator
+          ? { brazerCodes: nextCodes }
+          : isHpbOperator
+            ? { hpbCodes: nextCodes }
+            : { fpCodes: nextCodes })
       }
     }));
     setShowGenerateConfirm(false);
@@ -421,6 +498,13 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                 status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status
               }))
             }
+          : showViewAllModal === "br"
+            ? {
+                brazerCodes: nextCodes.map((code) => ({
+                  ...code,
+                  status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status
+                }))
+              }
           : {
               fpCodes: nextCodes.map((code) => ({
                 ...code,
@@ -507,7 +591,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     <select
                       value={currentValues.modelNumberId}
                       onChange={(event) => updateField("modelNumberId", event.target.value)}
-                      disabled={isHpbOperator}
+                      disabled={isDerivedOperator}
                       className="h-10 w-full appearance-none rounded-[8px] border border-[#d9dfec] bg-white pr-11 pl-[14px] text-[#173069] outline-none disabled:bg-[#f8f9fc] disabled:text-[#7b879a]"
                     >
                       <option value="">Select Model Number</option>
@@ -531,7 +615,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     min="1"
                     value={currentValues.quantity}
                     onChange={(event) => updateField("quantity", event.target.value)}
-                    disabled={isHpbOperator}
+                    disabled={isDerivedOperator}
                     className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none disabled:bg-[#f8f9fc] disabled:text-[#7b879a]"
                   />
                 </Field>
@@ -541,7 +625,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     type="date"
                     value={currentValues.dateOfManufacturing}
                     onChange={(event) => updateField("dateOfManufacturing", event.target.value)}
-                    disabled={isHpbOperator}
+                    disabled={isDerivedOperator}
                     className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none disabled:bg-[#f8f9fc] disabled:text-[#7b879a]"
                   />
                 </Field>
@@ -567,7 +651,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     type="text"
                     value={currentValues.aluminiumRmCode}
                     onChange={(event) => updateField("aluminiumRmCode", event.target.value)}
-                    disabled={isHpbOperator}
+                    disabled={isDerivedOperator}
                     className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none disabled:bg-[#f8f9fc] disabled:text-[#9aa4b5]"
                   />
                 </Field>
@@ -647,7 +731,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     value={currentValues.productCount}
                     onChange={(event) => updateField("productCount", event.target.value)}
                     placeholder="Enter Product count"
-                    disabled={isHpbOperator}
+                    disabled={isDerivedOperator}
                     className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6] disabled:bg-[#f8f9fc]"
                   />
                 </Field>
@@ -658,7 +742,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     value={currentValues.lacingOperatorCode}
                     onChange={(event) => updateField("lacingOperatorCode", event.target.value)}
                     placeholder="Operator Code"
-                    disabled={isHpbOperator}
+                    disabled={isDerivedOperator}
                     className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-[#fbfcff] px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6]"
                   />
                 </Field>
@@ -669,20 +753,48 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     value={currentValues.expansionOperatorCode}
                     onChange={(event) => updateField("expansionOperatorCode", event.target.value)}
                     placeholder="Operator Code"
-                    disabled={isHpbOperator}
+                    disabled={isDerivedOperator}
                     className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-[#fbfcff] px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6]"
                   />
                 </Field>
 
-                <Field label="Brazer Name">
-                  <input
-                    type="text"
-                    value={currentValues.brazerName}
-                    onChange={(event) => updateField("brazerName", event.target.value)}
-                    placeholder="Operator Code"
-                    disabled={isHpbOperator}
-                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-[#fbfcff] px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6]"
-                  />
+                <Field
+                  label="Brazer Name"
+                  extra={
+                    currentValues.brazerCodes.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowViewAllModal("br")}
+                        className="text-[13px] font-bold text-[#0d255f]"
+                      >
+                        View All
+                      </button>
+                    ) : null
+                  }
+                >
+                  {isBrazerOperator && currentValues.brazerCodes.length > 0 ? (
+                    <div className="flex h-10 items-center justify-between rounded-[8px] border border-[#d9dfec] bg-[#fdfefe] px-[14px] text-[#173069]">
+                      <span>{brazerPreview}</span>
+                      {brazerExtraCodesCount > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setShowViewAllModal("br")}
+                          className="text-[13px] font-bold text-[#6675ff]"
+                        >
+                          + {brazerExtraCodesCount} More
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <input
+                      type="text"
+                      value={currentValues.brazerName}
+                      onChange={(event) => updateField("brazerName", event.target.value)}
+                      placeholder="Operator Code"
+                      disabled={isHpbOperator}
+                      className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-[#fbfcff] px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6] disabled:bg-[#f8f9fc]"
+                    />
+                  )}
                 </Field>
 
                 <Field label="Leak Testing Operator Code">
@@ -691,7 +803,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     value={currentValues.leakTestingOperatorCode}
                     onChange={(event) => updateField("leakTestingOperatorCode", event.target.value)}
                     placeholder="Operator Code"
-                    disabled={isHpbOperator}
+                    disabled={isDerivedOperator}
                     className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-[#fbfcff] px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6]"
                   />
                 </Field>
@@ -701,7 +813,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     <select
                       value={currentValues.packingType}
                       onChange={(event) => updateField("packingType", event.target.value)}
-                      disabled={isHpbOperator}
+                      disabled={isDerivedOperator}
                       className="h-10 w-full appearance-none rounded-[8px] border border-[#d9dfec] bg-white pr-11 pl-[14px] text-[#173069] outline-none disabled:bg-[#f8f9fc]"
                     >
                       <option value="">Select Code</option>
@@ -722,7 +834,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     value={currentValues.packerName}
                     onChange={(event) => updateField("packerName", event.target.value)}
                     placeholder="Operator Code"
-                    disabled={isHpbOperator}
+                    disabled={isDerivedOperator}
                     className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-[#fbfcff] px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6]"
                   />
                 </Field>
@@ -733,16 +845,15 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     value={currentValues.inspectionDoneBy}
                     onChange={(event) => updateField("inspectionDoneBy", event.target.value)}
                     placeholder="Enter packing"
-                    disabled={isHpbOperator}
+                    disabled={isDerivedOperator}
                     className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6] disabled:bg-[#f8f9fc]"
                   />
                 </Field>
               </div>
 
               {activeSection === "heat-exchanger" &&
-              (isHpbOperator
-                ? currentValues.copperTubeRmCode.trim() && currentValues.hpbCodes.length === 0
-                : currentValues.aluminiumRmCode.trim() && currentValues.fpCodes.length === 0) ? (
+              activeStageValue &&
+              activeStageCodes.length === 0 ? (
                 <div className="mt-12 flex justify-center">
                   <button
                     type="button"
@@ -770,10 +881,24 @@ export default function ProductionDashboardPage({ session, onLogout }) {
       {showViewAllModal &&
       (showViewAllModal === "hpb"
         ? currentValues.hpbCodes.length > 0
-        : currentValues.fpCodes.length > 0) ? (
+        : showViewAllModal === "br"
+          ? currentValues.brazerCodes.length > 0
+          : currentValues.fpCodes.length > 0) ? (
         <FpCodesModal
-          title={showViewAllModal === "hpb" ? "HPB Operator Codes" : "FP Operator Codes"}
-          codes={showViewAllModal === "hpb" ? currentValues.hpbCodes : currentValues.fpCodes}
+          title={
+            showViewAllModal === "hpb"
+              ? "HPB Operator Codes"
+              : showViewAllModal === "br"
+                ? "Brazer Operator Codes"
+                : "FP Operator Codes"
+          }
+          codes={
+            showViewAllModal === "hpb"
+              ? currentValues.hpbCodes
+              : showViewAllModal === "br"
+                ? currentValues.brazerCodes
+                : currentValues.fpCodes
+          }
           onClose={() => setShowViewAllModal(null)}
           onSave={handleSaveStatuses}
         />

@@ -76,6 +76,13 @@ export function generateHpbOperatorCodes(payload) {
   });
 }
 
+export function generateBrazerOperatorCodes(payload) {
+  return request("/production/brazer-codes", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
 export function updateOperatorCodeStatuses(payload) {
   return request("/production/operator-codes/statuses", {
     method: "PATCH",
