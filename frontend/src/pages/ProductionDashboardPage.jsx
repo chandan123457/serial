@@ -1,12 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Flame,
   Waves,
   Snowflake,
-  CalendarDays,
   ChevronDown,
   LogOut
 } from "lucide-react";
+import { fetchAdminBootstrap } from "../admin/adminApi";
 
 const sections = [
   { id: "heat-exchanger", label: "Heat Exchanger", icon: Flame },
@@ -54,7 +54,7 @@ function LogoMark() {
   );
 }
 
-function InputField({ field }) {
+function InputField({ field, options = [] }) {
   const isDate = field.type === "date";
   const isSelect = field.type === "select";
 
@@ -62,24 +62,27 @@ function InputField({ field }) {
     <label className="grid gap-2">
       <span className="text-[13px] leading-[1.2] font-bold text-[#0f255b]">{field.label}</span>
       <div className="relative">
-        <input
-          type="text"
-          placeholder={field.placeholder}
-          readOnly={isDate || isSelect}
-          className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white pr-11 pl-[14px] text-[#173069] outline-none placeholder:text-[#b6bece]"
-        />
-        {isDate && (
-          <CalendarDays
-            size={18}
-            strokeWidth={2}
-            className="pointer-events-none absolute top-1/2 right-[14px] -translate-y-1/2 text-[#233355]"
-          />
-        )}
-        {isSelect && (
-          <ChevronDown
-            size={18}
-            strokeWidth={2}
-            className="pointer-events-none absolute top-1/2 right-[14px] -translate-y-1/2 text-[#233355]"
+        {isSelect ? (
+          <>
+            <select className="h-10 w-full appearance-none rounded-[8px] border border-[#d9dfec] bg-white pr-11 pl-[14px] text-[#173069] outline-none">
+              <option value="">{field.placeholder}</option>
+              {options.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.modelNumber}
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              size={18}
+              strokeWidth={2}
+              className="pointer-events-none absolute top-1/2 right-[14px] -translate-y-1/2 text-[#233355]"
+            />
+          </>
+        ) : (
+          <input
+            type={isDate ? "date" : "text"}
+            placeholder={field.placeholder}
+            className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white pr-4 pl-[14px] text-[#173069] outline-none placeholder:text-[#b6bece]"
           />
         )}
       </div>
@@ -89,11 +92,25 @@ function InputField({ field }) {
 
 export default function ProductionDashboardPage({ session, onLogout }) {
   const [activeSection, setActiveSection] = useState("heat-exchanger");
+  const [modelNumbers, setModelNumbers] = useState([]);
 
   const currentSection = useMemo(
     () => sections.find((section) => section.id === activeSection) ?? sections[0],
     [activeSection]
   );
+
+  useEffect(() => {
+    async function loadModelNumbers() {
+      try {
+        const data = await fetchAdminBootstrap();
+        setModelNumbers(data.modelNumbers ?? []);
+      } catch (error) {
+        console.error("Failed to load model numbers", error);
+      }
+    }
+
+    loadModelNumbers();
+  }, []);
 
   return (
     <div className="grid min-h-screen grid-cols-1 bg-[#f5f7fb] lg:grid-cols-[280px_minmax(0,1fr)]">
@@ -137,6 +154,9 @@ export default function ProductionDashboardPage({ session, onLogout }) {
           <div className="mb-3 rounded-xl bg-white/8 px-4 py-3 text-center text-[14px] font-semibold text-white/90">
             {session?.user?.username ?? "User"}
           </div>
+          <div className="mb-3 rounded-xl bg-white/8 px-4 py-3 text-center text-[14px] font-semibold text-white/75">
+            {session?.user?.operatorNumber ?? "Operator No."}
+          </div>
           <button
             type="button"
             onClick={onLogout}
@@ -163,7 +183,11 @@ export default function ProductionDashboardPage({ session, onLogout }) {
               </h3>
               <div className="grid gap-x-5 gap-y-4 md:grid-cols-2">
                 {topFields.map((field) => (
-                  <InputField key={field.label} field={field} />
+                  <InputField
+                    key={field.label}
+                    field={field}
+                    options={field.type === "select" ? modelNumbers : []}
+                  />
                 ))}
               </div>
             </section>
