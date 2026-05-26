@@ -21,14 +21,19 @@ import {
   updateOperatorCodeStatuses
 } from "../admin/adminApi";
 import { condensingUnitSection } from "../condensing/condensingConfig";
+import { evaporatorUnitSection } from "../evaporator/evaporatorConfig";
 
 const sections = [
   { id: "heat-exchanger", label: "Heat Exchanger", icon: Flame },
   { ...condensingUnitSection, icon: Waves },
-  { id: "evaporator-unit", label: "Evaporator Unit", icon: Snowflake }
+  { ...evaporatorUnitSection, icon: Snowflake }
 ];
 
-const productionWorkflowSectionIds = new Set(["heat-exchanger", condensingUnitSection.id]);
+const productionWorkflowSectionIds = new Set([
+  "heat-exchanger",
+  condensingUnitSection.id,
+  evaporatorUnitSection.id
+]);
 
 const fpCodeFormat = {
   separator: "-",

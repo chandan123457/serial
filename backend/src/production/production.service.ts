@@ -4,6 +4,11 @@ import {
   condensingSectionLabel,
   condensingSerialPrefix
 } from "../condensing/condensing.constants.js";
+import {
+  evaporatorSectionKey,
+  evaporatorSectionLabel,
+  evaporatorSerialPrefix
+} from "../evaporator/evaporator.constants.js";
 
 type GenerateFpCodesInput = {
   sectionKey: string;
@@ -44,13 +49,13 @@ type GenerateInspectionSerialsInput = {
 const sectionPrefixMap: Record<string, string> = {
   "heat-exchanger": "H",
   [condensingSectionKey]: condensingSerialPrefix,
-  "evaporator-unit": "E"
+  [evaporatorSectionKey]: evaporatorSerialPrefix
 };
 
 const sectionLabelMap: Record<string, string> = {
   "heat-exchanger": "Heat Exchanger",
   [condensingSectionKey]: condensingSectionLabel,
-  "evaporator-unit": "Evaporator Unit"
+  [evaporatorSectionKey]: evaporatorSectionLabel
 };
 
 function mapCodeRow(row: Record<string, unknown>) {
