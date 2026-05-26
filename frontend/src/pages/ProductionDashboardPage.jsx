@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import JsBarcode from "jsbarcode";
 import {
   Check,
   ChevronDown,
@@ -15,6 +16,7 @@ import {
   generateBrazerOperatorCodes,
   generateFpOperatorCodes,
   generateHpbOperatorCodes,
+  generateInspectionSerials,
   generateLeakTestingOperatorCodes,
   updateOperatorCodeStatuses
 } from "../admin/adminApi";
@@ -48,6 +50,7 @@ function createInitialState() {
     brazerCodes: [],
     leakTestingOperatorCode: "",
     leakTestingCodes: [],
+    inspectionSerials: [],
     packingType: "",
     packerName: "",
     inspectionDoneBy: ""
@@ -266,6 +269,33 @@ function buildOperatorCodeValue(operatorNumber, dateValue, serial, codeType = "f
     .join(fpCodeFormat.separator);
 }
 
+function BarcodeSticker({ serialNumber }) {
+  const barcodeRef = useRef(null);
+
+  useEffect(() => {
+    if (!barcodeRef.current || !serialNumber) {
+      return;
+    }
+
+    JsBarcode(barcodeRef.current, serialNumber, {
+      format: "CODE128",
+      displayValue: false,
+      margin: 0,
+      width: 1,
+      height: 34
+    });
+  }, [serialNumber]);
+
+  return (
+    <div className="grid h-[15mm] w-[60mm] place-items-center bg-white text-black">
+      <div className="grid justify-items-center gap-[1mm]">
+        <svg ref={barcodeRef} className="h-[9mm] w-[35mm]" />
+        <div className="font-mono text-[7px] font-bold leading-none">{serialNumber}</div>
+      </div>
+    </div>
+  );
+}
+
 export default function ProductionDashboardPage({ session, onLogout }) {
   const [activeSection, setActiveSection] = useState("heat-exchanger");
   const [modelNumbers, setModelNumbers] = useState([]);
@@ -289,7 +319,10 @@ export default function ProductionDashboardPage({ session, onLogout }) {
   const isLeakTestingOperator =
     session?.user?.operatorType === "lt" ||
     session?.user?.operatorNumber?.toUpperCase().startsWith("LT");
-  const isDerivedOperator = isHpbOperator || isBrazerOperator || isLeakTestingOperator;
+  const isInspectorOperator =
+    session?.user?.operatorType === "inspec" ||
+    session?.user?.operatorNumber?.toUpperCase().startsWith("INSPEC");
+  const isDerivedOperator = isHpbOperator || isBrazerOperator || isLeakTestingOperator || isInspectorOperator;
   const fpPreview = currentValues.fpCodes[0]?.value ?? "";
   const extraCodesCount = Math.max(currentValues.fpCodes.length - 1, 0);
   const hpbPreview = currentValues.hpbCodes[0]?.value ?? "";
@@ -298,6 +331,17 @@ export default function ProductionDashboardPage({ session, onLogout }) {
   const brazerExtraCodesCount = Math.max(currentValues.brazerCodes.length - 1, 0);
   const leakTestingPreview = currentValues.leakTestingCodes[0]?.value ?? "";
   const leakTestingExtraCodesCount = Math.max(currentValues.leakTestingCodes.length - 1, 0);
+  const serialRange =
+    currentValues.inspectionSerials.length > 0
+      ? `${currentValues.inspectionSerials[0].serialNumber} to ${
+          currentValues.inspectionSerials[currentValues.inspectionSerials.length - 1].serialNumber
+        }`
+      : "";
+  const missingInspectionSerials = currentValues.leakTestingCodes.some(
+    (code) =>
+      code.status === "approved" &&
+      !currentValues.inspectionSerials.some((serial) => Number(serial.sourceSerial) === code.serial)
+  );
   const approvedBrazerCodesCount = currentValues.brazerCodes.filter(
     (code) => code.status === "approved"
   ).length;
@@ -313,33 +357,43 @@ export default function ProductionDashboardPage({ session, onLogout }) {
     Number(currentValues.quantity) > 0 &&
     currentValues.dateOfManufacturing &&
     currentValues.orderId.trim();
-  const activeStageValue = isLeakTestingOperator
-    ? approvedBrazerCodesCount > 0
-    : isBrazerOperator
-      ? currentValues.hpbCodes.length > 0
-      : isHpbOperator
-        ? currentValues.copperTubeRmCode.trim()
-        : currentValues.aluminiumRmCode.trim();
-  const activeStageCodes = isLeakTestingOperator
-    ? currentValues.leakTestingCodes
-    : isBrazerOperator
-      ? currentValues.brazerCodes
-      : isHpbOperator
-        ? currentValues.hpbCodes
-        : currentValues.fpCodes;
-  const hasRequiredPreviousStage = isLeakTestingOperator
-    ? approvedBrazerCodesCount > 0
-    : isBrazerOperator
-      ? currentValues.hpbCodes.length > 0
-      : isHpbOperator
-        ? currentValues.fpCodes.length > 0
-        : true;
+  const activeStageValue = isInspectorOperator
+    ? currentValues.inspectionDoneBy.trim()
+    : isLeakTestingOperator
+      ? approvedBrazerCodesCount > 0
+      : isBrazerOperator
+        ? currentValues.hpbCodes.length > 0
+        : isHpbOperator
+          ? currentValues.copperTubeRmCode.trim()
+          : currentValues.aluminiumRmCode.trim();
+  const activeStageCodes = isInspectorOperator
+    ? currentValues.inspectionSerials
+    : isLeakTestingOperator
+      ? currentValues.leakTestingCodes
+      : isBrazerOperator
+        ? currentValues.brazerCodes
+        : isHpbOperator
+          ? currentValues.hpbCodes
+          : currentValues.fpCodes;
+  const hasRequiredPreviousStage = isInspectorOperator
+    ? currentValues.leakTestingCodes.some((code) => code.status === "approved")
+    : isLeakTestingOperator
+      ? approvedBrazerCodesCount > 0
+      : isBrazerOperator
+        ? currentValues.hpbCodes.length > 0
+        : isHpbOperator
+          ? currentValues.fpCodes.length > 0
+          : true;
   const canGenerateCode =
     activeSection === "heat-exchanger" &&
     hasRequiredInputParameters &&
     activeStageValue &&
     session?.user?.operatorNumber &&
-    (isLeakTestingOperator ? hasMissingLeakTestingCodes : activeStageCodes.length === 0) &&
+    (isInspectorOperator
+      ? missingInspectionSerials || activeStageCodes.length === 0
+      : isLeakTestingOperator
+        ? hasMissingLeakTestingCodes
+        : activeStageCodes.length === 0) &&
     hasRequiredPreviousStage &&
     !orderLookupLoading;
 
@@ -404,7 +458,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
         }
 
         let brazerCodes = [];
-        if (isBrazerOperator || isLeakTestingOperator) {
+        if (isBrazerOperator || isLeakTestingOperator || isInspectorOperator) {
           const brazerResponse = await fetchFpOperatorCodesByOrder({
             sectionKey: activeSection,
             orderId: currentValues.orderId.trim(),
@@ -428,7 +482,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
         }
 
         let leakTestingCodes = [];
-        if (isLeakTestingOperator) {
+        if (isLeakTestingOperator || isInspectorOperator) {
           const leakTestingResponse = await fetchFpOperatorCodesByOrder({
             sectionKey: activeSection,
             orderId: currentValues.orderId.trim(),
@@ -499,7 +553,8 @@ export default function ProductionDashboardPage({ session, onLogout }) {
     currentValues.orderId,
     isDerivedOperator,
     isBrazerOperator,
-    isLeakTestingOperator
+    isLeakTestingOperator,
+    isInspectorOperator
   ]);
 
   function updateField(field, value) {
@@ -509,13 +564,35 @@ export default function ProductionDashboardPage({ session, onLogout }) {
         ...current[activeSection],
         [field]: value,
         ...(field === "orderId" && current[activeSection].orderId !== value
-          ? { fpCodes: [], hpbCodes: [], brazerCodes: [], leakTestingCodes: [] }
+          ? { fpCodes: [], hpbCodes: [], brazerCodes: [], leakTestingCodes: [], inspectionSerials: [] }
           : {})
       }
     }));
   }
 
   async function handleGenerateConfirm() {
+    if (isInspectorOperator) {
+      const response = await generateInspectionSerials({
+        sectionKey: activeSection,
+        orderId: currentValues.orderId,
+        operatorNumber: session.user.operatorNumber,
+        inspectionNote: currentValues.inspectionDoneBy
+      });
+
+      setSectionState((current) => ({
+        ...current,
+        [activeSection]: {
+          ...current[activeSection],
+          inspectionSerials: response.serials.map((serial) => ({
+            ...serial,
+            sourceSerial: Number(serial.sourceSerial)
+          }))
+        }
+      }));
+      setShowGenerateConfirm(false);
+      return;
+    }
+
     const response = isLeakTestingOperator
       ? await generateLeakTestingOperatorCodes({
           sectionKey: activeSection,
@@ -606,12 +683,22 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                   status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status
                 }))
               }
-          : showViewAllModal === "lt"
+          : showViewAllModal === "lt" ||
+              showViewAllModal === "lt-approved" ||
+              showViewAllModal === "lt-rejected"
             ? {
-                leakTestingCodes: nextCodes.map((code) => ({
-                  ...code,
-                  status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status
-                }))
+                leakTestingCodes: current[activeSection].leakTestingCodes.map((code) => {
+                  const updatedCode = nextCodes.find((nextCode) => nextCode.id === code.id);
+
+                  return updatedCode
+                    ? {
+                        ...code,
+                        status: statusesById.has(code.id)
+                          ? statusesById.get(code.id)
+                          : updatedCode.status
+                      }
+                    : code;
+                })
               }
           : {
               fpCodes: nextCodes.map((code) => ({
@@ -626,6 +713,14 @@ export default function ProductionDashboardPage({ session, onLogout }) {
 
   return (
     <div className="grid min-h-screen grid-cols-1 bg-[#f5f7fb] lg:grid-cols-[280px_minmax(0,1fr)]">
+      <style>
+        {`@media print {
+          body * { visibility: hidden; }
+          .barcode-print-area, .barcode-print-area * { visibility: visible; }
+          .barcode-print-area { position: absolute; inset: 0 auto auto 0; display: grid !important; gap: 0; }
+          @page { size: 60mm 15mm; margin: 0; }
+        }`}
+      </style>
       <aside className="flex flex-col bg-[#15285c] px-4 pt-6 pb-5 text-white">
         <div className="grid justify-items-center gap-[14px] pt-5 text-center">
           <LogoMark />
@@ -699,7 +794,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     <select
                       value={currentValues.modelNumberId}
                       onChange={(event) => updateField("modelNumberId", event.target.value)}
-                      disabled={isDerivedOperator}
+                      disabled={isDerivedOperator && !isInspectorOperator}
                       className="h-10 w-full appearance-none rounded-[8px] border border-[#d9dfec] bg-white pr-11 pl-[14px] text-[#173069] outline-none disabled:bg-[#f8f9fc] disabled:text-[#7b879a]"
                     >
                       <option value="">Select Model Number</option>
@@ -976,20 +1071,44 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                 </Field>
 
                 <Field label="Inspection Done by inspector at PID Stage">
-                  <input
-                    type="text"
-                    value={currentValues.inspectionDoneBy}
-                    onChange={(event) => updateField("inspectionDoneBy", event.target.value)}
-                    placeholder="Enter packing"
-                    disabled={isDerivedOperator}
-                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6] disabled:bg-[#f8f9fc]"
-                  />
+                  <div className="grid gap-1">
+                    <input
+                      type="text"
+                      value={currentValues.inspectionDoneBy}
+                      onChange={(event) => updateField("inspectionDoneBy", event.target.value)}
+                      placeholder="Enter packing"
+                      disabled={isDerivedOperator && !isInspectorOperator}
+                      className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none placeholder:text-[#d2d9e6] disabled:bg-[#f8f9fc]"
+                    />
+                    {isInspectorOperator ? (
+                      <div className="flex justify-between gap-3 text-[14px] font-extrabold">
+                        <button
+                          type="button"
+                          onClick={() => setShowViewAllModal("lt-rejected")}
+                          className="text-[#ff1654] underline"
+                        >
+                          View All (Rejected Codes)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowViewAllModal("lt-approved")}
+                          className="text-[#4a20ff] underline"
+                        >
+                          View All (Approved Codes)
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 </Field>
               </div>
 
               {activeSection === "heat-exchanger" &&
               activeStageValue &&
-              (isLeakTestingOperator ? hasMissingLeakTestingCodes : activeStageCodes.length === 0) ? (
+              (isInspectorOperator
+                ? missingInspectionSerials || activeStageCodes.length === 0
+                : isLeakTestingOperator
+                  ? hasMissingLeakTestingCodes
+                  : activeStageCodes.length === 0) ? (
                 <div className="mt-12 flex justify-center">
                   <button
                     type="button"
@@ -998,8 +1117,45 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     className="flex min-w-[198px] items-center justify-center gap-2 rounded-[8px] bg-[#07bf45] px-6 py-3 text-[16px] font-bold text-white shadow-sm transition disabled:cursor-not-allowed disabled:blur-[1px] disabled:opacity-45"
                   >
                     <Check size={18} />
-                    <span>{orderLookupLoading ? "Checking..." : "Generate Code"}</span>
+                    <span>
+                      {orderLookupLoading
+                        ? "Checking..."
+                        : isInspectorOperator
+                          ? "Generate S.No"
+                          : "Generate Code"}
+                    </span>
                   </button>
+                </div>
+              ) : null}
+
+              {isInspectorOperator && currentValues.inspectionSerials.length > 0 ? (
+                <div className="mt-9 grid gap-5">
+                  <p className="text-[16px] font-extrabold text-[#0d255f]">
+                    Generated Serial Range: {serialRange} (Final Approved Qty:{" "}
+                    {currentValues.inspectionSerials.length})
+                  </p>
+                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(220px,540px)]">
+                    <Field label="Serial Number">
+                      <input
+                        type="text"
+                        value={serialRange}
+                        readOnly
+                        className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-[#f8f9fc] px-[14px] font-mono text-[#173069] outline-none"
+                      />
+                    </Field>
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="self-end rounded-[8px] bg-[#162d61] px-6 py-3 text-[16px] font-bold text-white print:hidden"
+                    >
+                      Print
+                    </button>
+                  </div>
+                  <div className="barcode-print-area hidden print:grid print:grid-cols-1 print:gap-0">
+                    {currentValues.inspectionSerials.map((serial) => (
+                      <BarcodeSticker key={serial.id} serialNumber={serial.serialNumber} />
+                    ))}
+                  </div>
                 </div>
               ) : null}
             </section>
@@ -1019,8 +1175,16 @@ export default function ProductionDashboardPage({ session, onLogout }) {
         ? currentValues.hpbCodes.length > 0
         : showViewAllModal === "br"
           ? currentValues.brazerCodes.length > 0
-          : showViewAllModal === "lt"
-            ? currentValues.leakTestingCodes.length > 0
+          : showViewAllModal === "lt" ||
+              showViewAllModal === "lt-approved" ||
+              showViewAllModal === "lt-rejected"
+            ? currentValues.leakTestingCodes.filter((code) =>
+                showViewAllModal === "lt-approved"
+                  ? code.status === "approved"
+                  : showViewAllModal === "lt-rejected"
+                    ? code.status === "rejected"
+                    : true
+              ).length > 0
             : currentValues.fpCodes.length > 0) ? (
         <FpCodesModal
           title={
@@ -1028,8 +1192,16 @@ export default function ProductionDashboardPage({ session, onLogout }) {
               ? "HPB Operator Codes"
               : showViewAllModal === "br"
                 ? "Brazer Operator Codes"
-                : showViewAllModal === "lt"
-                  ? "Leak Testing Operator Codes"
+                : showViewAllModal === "lt" ||
+                    showViewAllModal === "lt-approved" ||
+                    showViewAllModal === "lt-rejected"
+                  ? `Leak Testing Operator Codes${
+                      showViewAllModal === "lt-approved"
+                        ? " (Approved)"
+                        : showViewAllModal === "lt-rejected"
+                          ? " (Rejected)"
+                          : ""
+                    }`
                   : "FP Operator Codes"
           }
           codes={
@@ -1037,11 +1209,23 @@ export default function ProductionDashboardPage({ session, onLogout }) {
               ? currentValues.hpbCodes
               : showViewAllModal === "br"
                 ? currentValues.brazerCodes
-                : showViewAllModal === "lt"
-                  ? currentValues.leakTestingCodes
+                : showViewAllModal === "lt" ||
+                    showViewAllModal === "lt-approved" ||
+                    showViewAllModal === "lt-rejected"
+                  ? currentValues.leakTestingCodes.filter((code) =>
+                      showViewAllModal === "lt-approved"
+                        ? code.status === "approved"
+                        : showViewAllModal === "lt-rejected"
+                          ? code.status === "rejected"
+                          : true
+                    )
                   : currentValues.fpCodes
           }
-          lockResolvedStatuses={showViewAllModal === "lt"}
+          lockResolvedStatuses={
+            showViewAllModal === "lt" ||
+            showViewAllModal === "lt-approved" ||
+            showViewAllModal === "lt-rejected"
+          }
           onClose={() => setShowViewAllModal(null)}
           onSave={handleSaveStatuses}
         />

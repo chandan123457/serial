@@ -95,6 +95,22 @@ export async function initializeDatabase() {
     END $$;
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS generated_serial_numbers (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      serial_index BIGSERIAL NOT NULL UNIQUE,
+      serial_number TEXT UNIQUE,
+      section_key TEXT NOT NULL,
+      order_id TEXT NOT NULL,
+      lt_code_id UUID NOT NULL REFERENCES generated_operator_codes(id),
+      source_serial BIGINT NOT NULL,
+      inspector_operator_number TEXT NOT NULL,
+      inspection_note TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (section_key, order_id, lt_code_id)
+    );
+  `);
+
   const defaultAdminUsername = "PPC";
   const defaultAdminPassword = "pragya@123";
   const passwordHash = await bcrypt.hash(defaultAdminPassword, 10);

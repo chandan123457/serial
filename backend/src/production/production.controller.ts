@@ -3,15 +3,19 @@ import {
   generateBrazerCodesSchema,
   generateFpCodesSchema,
   generateHpbCodesSchema,
+  generateInspectionSerialsSchema,
   generateLeakTestingCodesSchema,
+  getBarcodeDetailsSchema,
   getFpCodesByOrderSchema,
   updateCodeStatusesSchema
 } from "./production.schemas.js";
 import {
+  generateInspectionSerials,
   generateBrazerCodes,
   generateFpCodes,
   generateHpbCodes,
   generateLeakTestingCodes,
+  getBarcodeDetails,
   getFpCodesByOrder,
   updateCodeStatuses
 } from "./production.service.js";
@@ -85,6 +89,33 @@ export async function patchCodeStatuses(request: Request, response: Response) {
     const codes = await updateCodeStatuses(payload.codes);
 
     response.json({ codes });
+  } catch (error) {
+    handleError(error, response);
+  }
+}
+
+export async function postGenerateInspectionSerials(request: Request, response: Response) {
+  try {
+    const payload = generateInspectionSerialsSchema.parse(request.body);
+    const serials = await generateInspectionSerials(payload);
+
+    response.status(201).json({ serials });
+  } catch (error) {
+    handleError(error, response);
+  }
+}
+
+export async function getSerialBarcodeDetails(request: Request, response: Response) {
+  try {
+    const payload = getBarcodeDetailsSchema.parse(request.params);
+    const details = await getBarcodeDetails(payload.serialNumber);
+
+    if (!details) {
+      response.status(404).json({ message: "Serial number not found" });
+      return;
+    }
+
+    response.json(details);
   } catch (error) {
     handleError(error, response);
   }

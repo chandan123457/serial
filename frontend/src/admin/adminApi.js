@@ -90,6 +90,17 @@ export function generateLeakTestingOperatorCodes(payload) {
   });
 }
 
+export function generateInspectionSerials(payload) {
+  return request("/production/inspection-serials", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function fetchBarcodeDetails(serialNumber) {
+  return request(`/production/barcode-details/${encodeURIComponent(serialNumber)}`);
+}
+
 export function updateOperatorCodeStatuses(payload) {
   return request("/production/operator-codes/statuses", {
     method: "PATCH",

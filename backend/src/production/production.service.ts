@@ -29,6 +29,25 @@ type GenerateDerivedCodesInput = GenerateHpbCodesInput & {
   sourceStatus?: "approved";
 };
 
+type GenerateInspectionSerialsInput = {
+  sectionKey: string;
+  orderId: string;
+  operatorNumber: string;
+  inspectionNote: string;
+};
+
+const sectionPrefixMap: Record<string, string> = {
+  "heat-exchanger": "H",
+  "condensing-unit": "C",
+  "evaporator-unit": "E"
+};
+
+const sectionLabelMap: Record<string, string> = {
+  "heat-exchanger": "Heat Exchanger",
+  "condensing-unit": "Condensing Unit",
+  "evaporator-unit": "Evaporator Unit"
+};
+
 function mapCodeRow(row: Record<string, unknown>) {
   return {
     id: row.id,
@@ -41,6 +60,22 @@ function mapCodeRow(row: Record<string, unknown>) {
     orderId: row.orderId,
     rmCode: row.rmCode
   };
+}
+
+function buildSerialNumber(sectionKey: string, manufacturingDate: string, serialIndex: number) {
+  const [, month, year] = manufacturingDate.split("-");
+  const prefix = sectionPrefixMap[sectionKey] ?? sectionKey.slice(0, 1).toUpperCase();
+  return `${prefix}${month}${year.slice(-2)}-${String(serialIndex).padStart(5, "0")}`;
+}
+
+function buildOperatorCodeValue(operatorNumber: string, manufacturingDate: string, serial: string | number, codeType: string) {
+  const [, month, year] = manufacturingDate.split("-");
+  const prefix =
+    codeType === "br" || codeType === "lt"
+      ? operatorNumber.split("-")[0]
+      : operatorNumber.replace("-", "");
+
+  return `${prefix}-${month}-${year}-${serial}`;
 }
 
 export async function getFpCodesByOrder(input: GetFpCodesByOrderInput) {
@@ -374,4 +409,184 @@ export async function updateCodeStatuses(
   } finally {
     client.release();
   }
+}
+
+export async function generateInspectionSerials(input: GenerateInspectionSerialsInput) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const ltResult = await client.query(
+      `
+        SELECT id,
+          serial,
+          TO_CHAR(manufacturing_date, 'YYYY-MM-DD') AS "manufacturingDate"
+        FROM generated_operator_codes
+        WHERE section_key = $1
+          AND code_type = 'lt'
+          AND order_id = $2
+          AND status = 'approved'
+        ORDER BY serial ASC
+      `,
+      [input.sectionKey, input.orderId]
+    );
+
+    if (ltResult.rows.length === 0) {
+      throw new Error("Approved LT codes not found for this Order ID");
+    }
+
+    const serials = [];
+
+    for (const ltCode of ltResult.rows) {
+      const existingResult = await client.query(
+        `
+          SELECT id,
+            serial_number AS "serialNumber",
+            source_serial AS "sourceSerial",
+            inspection_note AS "inspectionNote"
+          FROM generated_serial_numbers
+          WHERE section_key = $1
+            AND order_id = $2
+            AND lt_code_id = $3
+        `,
+        [input.sectionKey, input.orderId, ltCode.id]
+      );
+
+      if (existingResult.rows[0]) {
+        serials.push(existingResult.rows[0]);
+        continue;
+      }
+
+      const insertedResult = await client.query(
+        `
+          INSERT INTO generated_serial_numbers (
+            section_key,
+            order_id,
+            lt_code_id,
+            source_serial,
+            inspector_operator_number,
+            inspection_note
+          )
+          VALUES ($1, $2, $3, $4, $5, $6)
+          RETURNING id, serial_index AS "serialIndex"
+        `,
+        [
+          input.sectionKey,
+          input.orderId,
+          ltCode.id,
+          ltCode.serial,
+          input.operatorNumber,
+          input.inspectionNote
+        ]
+      );
+
+      const serialNumber = buildSerialNumber(
+        input.sectionKey,
+        ltCode.manufacturingDate,
+        Number(insertedResult.rows[0].serialIndex)
+      );
+
+      const updatedResult = await client.query(
+        `
+          UPDATE generated_serial_numbers
+          SET serial_number = $1
+          WHERE id = $2
+          RETURNING id,
+            serial_number AS "serialNumber",
+            source_serial AS "sourceSerial",
+            inspection_note AS "inspectionNote"
+        `,
+        [serialNumber, insertedResult.rows[0].id]
+      );
+
+      serials.push(updatedResult.rows[0]);
+    }
+
+    await client.query("COMMIT");
+    return serials;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getBarcodeDetails(serialNumber: string) {
+  const serialResult = await pool.query(
+    `
+      SELECT gs.serial_number AS "serialNumber",
+        gs.section_key AS "sectionKey",
+        gs.order_id AS "orderId",
+        gs.source_serial AS "sourceSerial",
+        gs.inspection_note AS "inspectionNote",
+        TO_CHAR(lt.manufacturing_date, 'YYYY-MM-DD') AS "manufacturingDate",
+        lt.model_number_id AS "modelNumberId",
+        model.model_number AS "modelNumber"
+      FROM generated_serial_numbers gs
+      JOIN generated_operator_codes lt ON lt.id = gs.lt_code_id
+      LEFT JOIN admin_model_numbers model ON model.id = lt.model_number_id
+      WHERE gs.serial_number = $1
+      LIMIT 1
+    `,
+    [serialNumber]
+  );
+
+  if (!serialResult.rows[0]) {
+    return null;
+  }
+
+  const serial = serialResult.rows[0];
+  const codesResult = await pool.query(
+    `
+      SELECT code_type AS "codeType",
+        codes.operator_number AS "operatorNumber",
+        codes.serial,
+        codes.status,
+        codes.rm_code AS "rmCode",
+        TO_CHAR(codes.manufacturing_date, 'YYYY-MM-DD') AS "manufacturingDate",
+        users.username
+      FROM generated_operator_codes codes
+      LEFT JOIN admin_users users ON users.operator_number = codes.operator_number
+      WHERE section_key = $1
+        AND order_id = $2
+        AND serial = $3
+      ORDER BY CASE code_type
+        WHEN 'fp' THEN 1
+        WHEN 'hpb' THEN 2
+        WHEN 'br' THEN 3
+        WHEN 'lt' THEN 4
+        ELSE 9
+      END
+    `,
+    [serial.sectionKey, serial.orderId, serial.sourceSerial]
+  );
+
+  const codes = codesResult.rows.map((code) => ({
+    ...code,
+    code: buildOperatorCodeValue(
+      code.operatorNumber,
+      code.manufacturingDate,
+      code.serial,
+      code.codeType
+    )
+  }));
+
+  return {
+    serialNumber: serial.serialNumber,
+    moduleName: sectionLabelMap[serial.sectionKey] ?? serial.sectionKey,
+    orderId: serial.orderId,
+    modelNumber: serial.modelNumber,
+    inspectionNote: serial.inspectionNote,
+    aluminiumDetails: codes.find((code) => code.codeType === "fp")?.rmCode ?? "",
+    copperTubeDetails: codes.find((code) => code.codeType === "hpb")?.rmCode ?? "",
+    operatorFlow: codes.map((code) => ({
+      key: code.codeType,
+      label: code.codeType.toUpperCase(),
+      code: code.code,
+      status: code.status ?? "untouched",
+      username: code.username ?? code.operatorNumber
+    }))
+  };
 }

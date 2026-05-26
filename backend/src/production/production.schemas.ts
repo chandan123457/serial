@@ -45,3 +45,14 @@ export const updateCodeStatusesSchema = z.object({
     })
   )
 });
+
+export const generateInspectionSerialsSchema = z.object({
+  sectionKey: z.string().min(1),
+  orderId: z.string().trim().min(1),
+  operatorNumber: z.string().min(1),
+  inspectionNote: z.string().trim().min(1)
+});
+
+export const getBarcodeDetailsSchema = z.object({
+  serialNumber: z.string().trim().min(1)
+});

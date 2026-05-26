@@ -12,7 +12,7 @@ function LogoMark() {
   );
 }
 
-export default function AdminSidebar({ username, onLogout }) {
+export default function AdminSidebar({ username, activeItem = "dashboard", onNavigate, onLogout }) {
   return (
     <aside className="flex min-h-screen flex-col bg-[#101d3a] text-white">
       <div className="border-b border-white/5 px-4 py-7">
@@ -31,8 +31,9 @@ export default function AdminSidebar({ username, onLogout }) {
             <button
               key={item.key}
               type="button"
+              onClick={() => onNavigate?.(item.key)}
               className={`rounded-xl px-5 py-4 text-center text-[17px] font-bold ${
-                index === 0
+                item.key === activeItem
                   ? "bg-[#ffc514] text-[#172d63]"
                   : "bg-transparent text-white/90 hover:bg-white/5"
               }`}
