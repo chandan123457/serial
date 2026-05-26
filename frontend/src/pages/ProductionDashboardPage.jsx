@@ -120,7 +120,7 @@ function ConfirmGenerateModal({ onClose, onConfirm }) {
   );
 }
 
-function FpCodesModal({ title, codes, lockedStatuses = [], onClose, onSave }) {
+function FpCodesModal({ title, codes, lockedStatuses = [], readOnly = false, onClose, onSave }) {
   const [localCodes, setLocalCodes] = useState(codes);
   const lockedCodeIds = useMemo(
     () =>
@@ -134,7 +134,7 @@ function FpCodesModal({ title, codes, lockedStatuses = [], onClose, onSave }) {
   );
 
   function setStatus(index, status) {
-    if (lockedCodeIds.has(localCodes[index]?.id)) {
+    if (readOnly || lockedCodeIds.has(localCodes[index]?.id)) {
       return;
     }
 
@@ -170,7 +170,28 @@ function FpCodesModal({ title, codes, lockedStatuses = [], onClose, onSave }) {
             </thead>
             <tbody>
               {localCodes.map((code, index) => {
-                const isLocked = lockedCodeIds.has(code.id);
+                const isLocked = readOnly || lockedCodeIds.has(code.id);
+                const statusMeta =
+                  code.status === "approved"
+                    ? {
+                        label: "Approved",
+                        textClass: "text-[#0fc65b]",
+                        iconClass: "bg-[#0fc65b]",
+                        icon: <Check size={14} />
+                      }
+                    : code.status === "rejected"
+                      ? {
+                          label: "Rejected",
+                          textClass: "text-[#ff1654]",
+                          iconClass: "bg-[#ff1654]",
+                          icon: <X size={14} />
+                        }
+                      : {
+                          label: "Untouched",
+                          textClass: "text-[#6f7d92]",
+                          iconClass: "bg-[#d8dee9]",
+                          icon: <Circle size={13} />
+                        };
 
                 return (
                   <tr key={code.value} className="border-b border-[#edf2f8]">
@@ -179,18 +200,14 @@ function FpCodesModal({ title, codes, lockedStatuses = [], onClose, onSave }) {
                     {isLocked ? (
                       <td className="px-4 py-4 text-center" colSpan={2}>
                         <span
-                          className={`inline-flex items-center gap-2 text-[13px] font-bold ${
-                            code.status === "approved" ? "text-[#0fc65b]" : "text-[#ff1654]"
-                          }`}
+                          className={`inline-flex items-center gap-2 text-[13px] font-bold ${statusMeta.textClass}`}
                         >
                           <span
-                            className={`grid h-6 w-6 place-items-center rounded-full text-white ${
-                              code.status === "approved" ? "bg-[#0fc65b]" : "bg-[#ff1654]"
-                            }`}
+                            className={`grid h-6 w-6 place-items-center rounded-full text-white ${statusMeta.iconClass}`}
                           >
-                            {code.status === "approved" ? <Check size={14} /> : <X size={14} />}
+                            {statusMeta.icon}
                           </span>
-                          {code.status === "approved" ? "Approved" : "Rejected"}
+                          {statusMeta.label}
                         </span>
                       </td>
                     ) : (
@@ -228,10 +245,10 @@ function FpCodesModal({ title, codes, lockedStatuses = [], onClose, onSave }) {
           <div className="mt-8 flex justify-end">
             <button
               type="button"
-              onClick={() => onSave(localCodes)}
+              onClick={readOnly ? onClose : () => onSave(localCodes)}
               className="rounded-[8px] bg-[#162d61] px-8 py-3 text-[16px] font-bold text-white"
             >
-              Save Status
+              {readOnly ? "Close" : "Save Status"}
             </button>
           </div>
         </div>
@@ -396,6 +413,9 @@ export default function ProductionDashboardPage({ session, onLogout }) {
   );
 
   const currentValues = sectionState[activeSection];
+  const isFpOperator =
+    session?.user?.operatorType === "fp" ||
+    session?.user?.operatorNumber?.toUpperCase().startsWith("FP");
   const isHpbOperator =
     session?.user?.operatorType === "hpb" ||
     session?.user?.operatorNumber?.toUpperCase().startsWith("HPB");
@@ -1343,6 +1363,17 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                   showViewAllModal === "lt-rejected"
                 ? ["approved", "rejected"]
                 : []
+          }
+          readOnly={
+            showViewAllModal === "fp"
+              ? !isFpOperator
+              : showViewAllModal === "hpb"
+                ? !isHpbOperator
+                : showViewAllModal === "br"
+                  ? !isBrazerOperator
+                  : showViewAllModal === "lt"
+                    ? !isLeakTestingOperator
+                    : true
           }
           onClose={() => setShowViewAllModal(null)}
           onSave={handleSaveStatuses}
