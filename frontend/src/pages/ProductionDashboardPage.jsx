@@ -127,6 +127,7 @@ function FpCodesModal({ title, codes, lockedStatuses = [], onClose, onSave }) {
       new Set(
         codes
           .filter((code) => code.status && lockedStatuses.includes(code.status))
+          .filter((code) => code.statusOperatorNumber)
           .map((code) => code.id)
       ),
     [codes, lockedStatuses]
@@ -541,6 +542,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                   "hpb"
                 ),
                 status: code.status,
+                statusOperatorNumber: code.statusOperatorNumber,
                 rmCode: code.rmCode
               }))
             : [];
@@ -565,6 +567,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                   "br"
                 ),
                 status: code.status,
+                statusOperatorNumber: code.statusOperatorNumber,
                 rmCode: code.rmCode
               }))
             : [];
@@ -589,6 +592,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                   "lt"
                 ),
                 status: code.status,
+                statusOperatorNumber: code.statusOperatorNumber,
                 rmCode: code.rmCode
               }))
             : [];
@@ -618,6 +622,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                 "fp"
               ),
               status: code.status,
+              statusOperatorNumber: code.statusOperatorNumber,
               rmCode: code.rmCode
             }))
           }
@@ -734,6 +739,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
         isLeakTestingOperator ? "lt" : isBrazerOperator ? "br" : isHpbOperator ? "hpb" : "fp"
       ),
       status: code.status,
+      statusOperatorNumber: code.statusOperatorNumber,
       rmCode: code.rmCode
     }));
 
@@ -765,6 +771,9 @@ export default function ProductionDashboardPage({ session, onLogout }) {
     const statusesById = new Map(
       response.codes.map((code) => [code.id, code.status])
     );
+    const statusOperatorsById = new Map(
+      response.codes.map((code) => [code.id, code.statusOperatorNumber])
+    );
 
     setSectionState((current) => ({
       ...current,
@@ -774,14 +783,20 @@ export default function ProductionDashboardPage({ session, onLogout }) {
           ? {
               hpbCodes: nextCodes.map((code) => ({
                 ...code,
-                status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status
+                status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status,
+                statusOperatorNumber: statusOperatorsById.has(code.id)
+                  ? statusOperatorsById.get(code.id)
+                  : code.statusOperatorNumber
               }))
             }
           : showViewAllModal === "br"
             ? {
                 brazerCodes: nextCodes.map((code) => ({
                   ...code,
-                  status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status
+                  status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status,
+                  statusOperatorNumber: statusOperatorsById.has(code.id)
+                    ? statusOperatorsById.get(code.id)
+                    : code.statusOperatorNumber
                 }))
               }
           : showViewAllModal === "lt" ||
@@ -796,7 +811,10 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                         ...code,
                         status: statusesById.has(code.id)
                           ? statusesById.get(code.id)
-                          : updatedCode.status
+                          : updatedCode.status,
+                        statusOperatorNumber: statusOperatorsById.has(code.id)
+                          ? statusOperatorsById.get(code.id)
+                          : updatedCode.statusOperatorNumber
                       }
                     : code;
                 })
@@ -804,7 +822,10 @@ export default function ProductionDashboardPage({ session, onLogout }) {
           : {
               fpCodes: nextCodes.map((code) => ({
                 ...code,
-                status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status
+                status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status,
+                statusOperatorNumber: statusOperatorsById.has(code.id)
+                  ? statusOperatorsById.get(code.id)
+                  : code.statusOperatorNumber
               }))
             })
       }
