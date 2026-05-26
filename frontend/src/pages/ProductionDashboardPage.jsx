@@ -20,12 +20,15 @@ import {
   generateLeakTestingOperatorCodes,
   updateOperatorCodeStatuses
 } from "../admin/adminApi";
+import { condensingUnitSection } from "../condensing/condensingConfig";
 
 const sections = [
   { id: "heat-exchanger", label: "Heat Exchanger", icon: Flame },
-  { id: "condensing-unit", label: "Condensing Unit", icon: Waves },
+  { ...condensingUnitSection, icon: Waves },
   { id: "evaporator-unit", label: "Evaporator Unit", icon: Snowflake }
 ];
+
+const productionWorkflowSectionIds = new Set(["heat-exchanger", condensingUnitSection.id]);
 
 const fpCodeFormat = {
   separator: "-",
@@ -413,6 +416,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
   );
 
   const currentValues = sectionState[activeSection];
+  const isProductionWorkflowSection = productionWorkflowSectionIds.has(activeSection);
   const isFpOperator =
     session?.user?.operatorType === "fp" ||
     session?.user?.operatorNumber?.toUpperCase().startsWith("FP");
@@ -495,7 +499,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
           ? currentValues.fpCodes.length > 0
           : true;
   const canGenerateCode =
-    activeSection === "heat-exchanger" &&
+    isProductionWorkflowSection &&
     hasRequiredInputParameters &&
     activeStageValue &&
     session?.user?.operatorNumber &&
@@ -521,7 +525,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
   }, []);
 
   useEffect(() => {
-    if (activeSection !== "heat-exchanger" || !currentValues.orderId.trim()) {
+    if (!isProductionWorkflowSection || !currentValues.orderId.trim()) {
       return;
     }
 
@@ -664,6 +668,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
     };
   }, [
     activeSection,
+    isProductionWorkflowSection,
     currentValues.orderId,
     isDerivedOperator,
     isBrazerOperator,
@@ -1236,7 +1241,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                 </Field>
               </div>
 
-              {activeSection === "heat-exchanger" &&
+              {isProductionWorkflowSection &&
               activeStageValue &&
               (isInspectorOperator
                 ? missingInspectionSerials || activeStageCodes.length === 0

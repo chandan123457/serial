@@ -1,4 +1,9 @@
 import { pool } from "../config/db.js";
+import {
+  condensingSectionKey,
+  condensingSectionLabel,
+  condensingSerialPrefix
+} from "../condensing/condensing.constants.js";
 
 type GenerateFpCodesInput = {
   sectionKey: string;
@@ -38,13 +43,13 @@ type GenerateInspectionSerialsInput = {
 
 const sectionPrefixMap: Record<string, string> = {
   "heat-exchanger": "H",
-  "condensing-unit": "C",
+  [condensingSectionKey]: condensingSerialPrefix,
   "evaporator-unit": "E"
 };
 
 const sectionLabelMap: Record<string, string> = {
   "heat-exchanger": "Heat Exchanger",
-  "condensing-unit": "Condensing Unit",
+  [condensingSectionKey]: condensingSectionLabel,
   "evaporator-unit": "Evaporator Unit"
 };
 
@@ -282,6 +287,7 @@ export async function generateFpCodes(input: GenerateFpCodesInput) {
         SELECT id,
           serial,
           status,
+          status_operator_number AS "statusOperatorNumber",
           operator_number AS "operatorNumber",
           model_number_id AS "modelNumberId",
           quantity,
@@ -326,12 +332,24 @@ export async function generateFpCodes(input: GenerateFpCodesInput) {
 
     const batchId = batchResult.rows[0].id;
     const codes = [];
+    const nextSerialResult = await client.query(
+      `
+        SELECT COALESCE(MAX(serial), 0) + 1 AS "nextSerial"
+        FROM generated_operator_codes
+        WHERE section_key = $1
+          AND code_type = 'fp'
+      `,
+      [input.sectionKey]
+    );
+    const firstSerial = Number(nextSerialResult.rows[0].nextSerial);
 
     for (let index = 0; index < input.quantity; index += 1) {
+      const serial = firstSerial + index;
       const result = await client.query(
         `
           INSERT INTO generated_operator_codes (
             batch_id,
+            serial,
             section_key,
             code_type,
             operator_number,
@@ -342,7 +360,7 @@ export async function generateFpCodes(input: GenerateFpCodesInput) {
             rm_code,
             status
           )
-          VALUES ($1, $2, 'fp', $3, NULLIF($4, '')::uuid, $5, $6, $7, $8, NULL)
+          VALUES ($1, $2, $3, 'fp', $4, NULLIF($5, '')::uuid, $6, $7, $8, $9, NULL)
           RETURNING id,
             serial,
             status,
@@ -356,6 +374,7 @@ export async function generateFpCodes(input: GenerateFpCodesInput) {
         `,
         [
           batchId,
+          serial,
           input.sectionKey,
           input.operatorNumber,
           input.modelNumberId ?? "",
@@ -397,7 +416,8 @@ export async function updateCodeStatuses(
           SET status = $1,
               status_operator_number = CASE
                 WHEN $1::text IS NULL THEN NULL
-                ELSE COALESCE($3, status_operator_number, operator_number)
+                WHEN status IS DISTINCT FROM $1::text THEN COALESCE($3, status_operator_number, operator_number)
+                ELSE COALESCE(status_operator_number, $3, operator_number)
               END,
               updated_at = NOW()
           WHERE id = $2
