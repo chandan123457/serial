@@ -128,7 +128,15 @@ function ConfirmGenerateModal({ onClose, onConfirm }) {
   );
 }
 
-function FpCodesModal({ title, codes, lockedStatuses = [], readOnly = false, onClose, onSave }) {
+function FpCodesModal({
+  title,
+  codes,
+  lockedStatuses = [],
+  readOnly = false,
+  saving = false,
+  onClose,
+  onSave
+}) {
   const [localCodes, setLocalCodes] = useState(codes);
   const lockedCodeIds = useMemo(
     () =>
@@ -142,7 +150,7 @@ function FpCodesModal({ title, codes, lockedStatuses = [], readOnly = false, onC
   );
 
   function setStatus(index, status) {
-    if (readOnly || lockedCodeIds.has(localCodes[index]?.id)) {
+    if (saving || readOnly || lockedCodeIds.has(localCodes[index]?.id)) {
       return;
     }
 
@@ -221,7 +229,7 @@ function FpCodesModal({ title, codes, lockedStatuses = [], readOnly = false, onC
                     ) : (
                       <>
                         <td className="px-4 py-4 text-center">
-                          <button type="button" onClick={() => setStatus(index, "approved")}>
+                          <button type="button" disabled={saving} onClick={() => setStatus(index, "approved")}>
                             {code.status === "approved" ? (
                               <span className="grid h-6 w-6 place-items-center rounded-full bg-[#0fc65b] text-white">
                                 <Check size={14} />
@@ -232,7 +240,7 @@ function FpCodesModal({ title, codes, lockedStatuses = [], readOnly = false, onC
                           </button>
                         </td>
                         <td className="px-4 py-4 text-center">
-                          <button type="button" onClick={() => setStatus(index, "rejected")}>
+                          <button type="button" disabled={saving} onClick={() => setStatus(index, "rejected")}>
                             {code.status === "rejected" ? (
                               <span className="grid h-6 w-6 place-items-center rounded-full bg-[#ff1654] text-white">
                                 <X size={14} />
@@ -253,10 +261,11 @@ function FpCodesModal({ title, codes, lockedStatuses = [], readOnly = false, onC
           <div className="mt-8 flex justify-end">
             <button
               type="button"
+              disabled={saving}
               onClick={readOnly ? onClose : () => onSave(localCodes)}
-              className="rounded-[8px] bg-[#162d61] px-8 py-3 text-[16px] font-bold text-white"
+              className="rounded-[8px] bg-[#162d61] px-8 py-3 text-[16px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {readOnly ? "Close" : "Save Status"}
+              {readOnly ? "Close" : saving ? "Saving..." : "Save Status"}
             </button>
           </div>
         </div>
@@ -414,6 +423,8 @@ export default function ProductionDashboardPage({ session, onLogout }) {
   const [showGenerateConfirm, setShowGenerateConfirm] = useState(false);
   const [showViewAllModal, setShowViewAllModal] = useState(null);
   const [orderLookupLoading, setOrderLookupLoading] = useState(false);
+  const [generateLoading, setGenerateLoading] = useState(false);
+  const [statusSaveLoading, setStatusSaveLoading] = useState(false);
 
   const currentSection = useMemo(
     () => sections.find((section) => section.id === activeSection) ?? sections[0],
@@ -531,6 +542,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
 
   useEffect(() => {
     if (!isProductionWorkflowSection || !currentValues.orderId.trim()) {
+      setOrderLookupLoading(false);
       return;
     }
 
@@ -544,7 +556,23 @@ export default function ProductionDashboardPage({ session, onLogout }) {
           orderId: currentValues.orderId.trim()
         });
 
-        if (ignore || !response.exists) {
+        if (ignore) {
+          return;
+        }
+
+        if (!response.exists) {
+          setSectionState((current) => ({
+            ...current,
+            [activeSection]: {
+              ...current[activeSection],
+              fpCodes: [],
+              hpbCodes: [],
+              brazerCodes: [],
+              leakTestingCodes: [],
+              inspectionSerials: [],
+              printableInspectionSerials: []
+            }
+          }));
           return;
         }
 
@@ -702,126 +730,124 @@ export default function ProductionDashboardPage({ session, onLogout }) {
   }
 
   async function handleGenerateConfirm() {
-    if (isInspectorOperator) {
-      const response = await generateInspectionSerials({
-        sectionKey: activeSection,
-        orderId: currentValues.orderId,
-        operatorNumber: session.user.operatorNumber,
-        inspectionNote: currentValues.inspectionDoneBy
-      });
+    try {
+      setGenerateLoading(true);
 
-      const serials = response.serials.map((serial) => ({
-        ...serial,
-        sourceSerial: Number(serial.sourceSerial)
+      if (isInspectorOperator) {
+        const response = await generateInspectionSerials({
+          sectionKey: activeSection,
+          orderId: currentValues.orderId,
+          operatorNumber: session.user.operatorNumber,
+          inspectionNote: currentValues.inspectionDoneBy
+        });
+
+        const serials = response.serials.map((serial) => ({
+          ...serial,
+          sourceSerial: Number(serial.sourceSerial)
+        }));
+        const printableSerials = serials.filter((serial) => serial.created);
+
+        setSectionState((current) => ({
+          ...current,
+          [activeSection]: {
+            ...current[activeSection],
+            inspectionSerials: serials,
+            printableInspectionSerials: printableSerials.length > 0 ? printableSerials : serials
+          }
+        }));
+        setShowGenerateConfirm(false);
+        return;
+      }
+
+      const response = isLeakTestingOperator
+        ? await generateLeakTestingOperatorCodes({
+            sectionKey: activeSection,
+            operatorNumber: session.user.operatorNumber,
+            orderId: currentValues.orderId,
+            rmCode: session.user.username || session.user.operatorNumber
+          })
+        : isBrazerOperator
+        ? await generateBrazerOperatorCodes({
+            sectionKey: activeSection,
+            operatorNumber: session.user.operatorNumber,
+            orderId: currentValues.orderId,
+            rmCode: currentValues.brazerName || session.user.username || session.user.operatorNumber
+          })
+        : isHpbOperator
+          ? await generateHpbOperatorCodes({
+            sectionKey: activeSection,
+            operatorNumber: session.user.operatorNumber,
+            orderId: currentValues.orderId,
+            rmCode: currentValues.copperTubeRmCode
+          })
+          : await generateFpOperatorCodes({
+            sectionKey: activeSection,
+            operatorNumber: session.user.operatorNumber,
+            modelNumberId: currentValues.modelNumberId,
+            quantity: Number(currentValues.quantity),
+            manufacturingDate: currentValues.dateOfManufacturing,
+            orderId: currentValues.orderId,
+            rmCode: currentValues.aluminiumRmCode
+          });
+
+      const nextCodes = response.codes.map((code) => ({
+        id: code.id,
+        serial: Number(code.serial),
+        value: buildOperatorCodeValue(
+          code.operatorNumber,
+          code.manufacturingDate,
+          Number(code.serial),
+          isLeakTestingOperator ? "lt" : isBrazerOperator ? "br" : isHpbOperator ? "hpb" : "fp"
+        ),
+        status: code.status,
+        statusOperatorNumber: code.statusOperatorNumber,
+        rmCode: code.rmCode
       }));
-      const printableSerials = serials.filter((serial) => serial.created);
 
       setSectionState((current) => ({
         ...current,
         [activeSection]: {
           ...current[activeSection],
-          inspectionSerials: serials,
-          printableInspectionSerials: printableSerials.length > 0 ? printableSerials : serials
+          ...(isLeakTestingOperator
+            ? { leakTestingCodes: nextCodes }
+            : isBrazerOperator
+              ? { brazerCodes: nextCodes }
+              : isHpbOperator
+                ? { hpbCodes: nextCodes }
+                : { fpCodes: nextCodes })
         }
       }));
       setShowGenerateConfirm(false);
-      return;
+    } finally {
+      setGenerateLoading(false);
     }
-
-    const response = isLeakTestingOperator
-      ? await generateLeakTestingOperatorCodes({
-          sectionKey: activeSection,
-          operatorNumber: session.user.operatorNumber,
-          orderId: currentValues.orderId,
-          rmCode: session.user.username || session.user.operatorNumber
-        })
-      : isBrazerOperator
-      ? await generateBrazerOperatorCodes({
-          sectionKey: activeSection,
-          operatorNumber: session.user.operatorNumber,
-          orderId: currentValues.orderId,
-          rmCode: currentValues.brazerName || session.user.username || session.user.operatorNumber
-        })
-      : isHpbOperator
-        ? await generateHpbOperatorCodes({
-          sectionKey: activeSection,
-          operatorNumber: session.user.operatorNumber,
-          orderId: currentValues.orderId,
-          rmCode: currentValues.copperTubeRmCode
-        })
-        : await generateFpOperatorCodes({
-          sectionKey: activeSection,
-          operatorNumber: session.user.operatorNumber,
-          modelNumberId: currentValues.modelNumberId,
-          quantity: Number(currentValues.quantity),
-          manufacturingDate: currentValues.dateOfManufacturing,
-          orderId: currentValues.orderId,
-          rmCode: currentValues.aluminiumRmCode
-        });
-
-    const nextCodes = response.codes.map((code) => ({
-      id: code.id,
-      serial: Number(code.serial),
-      value: buildOperatorCodeValue(
-        code.operatorNumber,
-        code.manufacturingDate,
-        Number(code.serial),
-        isLeakTestingOperator ? "lt" : isBrazerOperator ? "br" : isHpbOperator ? "hpb" : "fp"
-      ),
-      status: code.status,
-      statusOperatorNumber: code.statusOperatorNumber,
-      rmCode: code.rmCode
-    }));
-
-    setSectionState((current) => ({
-      ...current,
-      [activeSection]: {
-        ...current[activeSection],
-        ...(isLeakTestingOperator
-          ? { leakTestingCodes: nextCodes }
-          : isBrazerOperator
-            ? { brazerCodes: nextCodes }
-            : isHpbOperator
-              ? { hpbCodes: nextCodes }
-              : { fpCodes: nextCodes })
-      }
-    }));
-    setShowGenerateConfirm(false);
   }
 
   async function handleSaveStatuses(nextCodes) {
-    const response = await updateOperatorCodeStatuses({
-      operatorNumber: session?.user?.operatorNumber,
-      codes: nextCodes.map((code) => ({
-        id: code.id,
-        status: code.status
-      }))
-    });
+    try {
+      setStatusSaveLoading(true);
+      const response = await updateOperatorCodeStatuses({
+        operatorNumber: session?.user?.operatorNumber,
+        codes: nextCodes.map((code) => ({
+          id: code.id,
+          status: code.status
+        }))
+      });
 
-    const statusesById = new Map(
-      response.codes.map((code) => [code.id, code.status])
-    );
-    const statusOperatorsById = new Map(
-      response.codes.map((code) => [code.id, code.statusOperatorNumber])
-    );
+      const statusesById = new Map(
+        response.codes.map((code) => [code.id, code.status])
+      );
+      const statusOperatorsById = new Map(
+        response.codes.map((code) => [code.id, code.statusOperatorNumber])
+      );
 
-    setSectionState((current) => ({
-      ...current,
-      [activeSection]: {
-        ...current[activeSection],
-        ...(showViewAllModal === "hpb"
-          ? {
-              hpbCodes: nextCodes.map((code) => ({
-                ...code,
-                status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status,
-                statusOperatorNumber: statusOperatorsById.has(code.id)
-                  ? statusOperatorsById.get(code.id)
-                  : code.statusOperatorNumber
-              }))
-            }
-          : showViewAllModal === "br"
+      setSectionState((current) => ({
+        ...current,
+        [activeSection]: {
+          ...current[activeSection],
+          ...(showViewAllModal === "hpb"
             ? {
-                brazerCodes: nextCodes.map((code) => ({
+                hpbCodes: nextCodes.map((code) => ({
                   ...code,
                   status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status,
                   statusOperatorNumber: statusOperatorsById.has(code.id)
@@ -829,38 +855,51 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     : code.statusOperatorNumber
                 }))
               }
-          : showViewAllModal === "lt" ||
-              showViewAllModal === "lt-approved" ||
-              showViewAllModal === "lt-rejected"
-            ? {
-                leakTestingCodes: current[activeSection].leakTestingCodes.map((code) => {
-                  const updatedCode = nextCodes.find((nextCode) => nextCode.id === code.id);
+            : showViewAllModal === "br"
+              ? {
+                  brazerCodes: nextCodes.map((code) => ({
+                    ...code,
+                    status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status,
+                    statusOperatorNumber: statusOperatorsById.has(code.id)
+                      ? statusOperatorsById.get(code.id)
+                      : code.statusOperatorNumber
+                  }))
+                }
+            : showViewAllModal === "lt" ||
+                showViewAllModal === "lt-approved" ||
+                showViewAllModal === "lt-rejected"
+              ? {
+                  leakTestingCodes: current[activeSection].leakTestingCodes.map((code) => {
+                    const updatedCode = nextCodes.find((nextCode) => nextCode.id === code.id);
 
-                  return updatedCode
-                    ? {
-                        ...code,
-                        status: statusesById.has(code.id)
-                          ? statusesById.get(code.id)
-                          : updatedCode.status,
-                        statusOperatorNumber: statusOperatorsById.has(code.id)
-                          ? statusOperatorsById.get(code.id)
-                          : updatedCode.statusOperatorNumber
-                      }
-                    : code;
-                })
-              }
-          : {
-              fpCodes: nextCodes.map((code) => ({
-                ...code,
-                status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status,
-                statusOperatorNumber: statusOperatorsById.has(code.id)
-                  ? statusOperatorsById.get(code.id)
-                  : code.statusOperatorNumber
-              }))
-            })
-      }
-    }));
-    setShowViewAllModal(null);
+                    return updatedCode
+                      ? {
+                          ...code,
+                          status: statusesById.has(code.id)
+                            ? statusesById.get(code.id)
+                            : updatedCode.status,
+                          statusOperatorNumber: statusOperatorsById.has(code.id)
+                            ? statusOperatorsById.get(code.id)
+                            : updatedCode.statusOperatorNumber
+                        }
+                      : code;
+                  })
+                }
+            : {
+                fpCodes: nextCodes.map((code) => ({
+                  ...code,
+                  status: statusesById.has(code.id) ? statusesById.get(code.id) : code.status,
+                  statusOperatorNumber: statusOperatorsById.has(code.id)
+                    ? statusOperatorsById.get(code.id)
+                    : code.statusOperatorNumber
+                }))
+              })
+        }
+      }));
+      setShowViewAllModal(null);
+    } finally {
+      setStatusSaveLoading(false);
+    }
   }
 
   return (
@@ -978,12 +1017,17 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                 </Field>
 
                 <Field label="Order ID">
-                  <input
-                    type="text"
-                    value={currentValues.orderId}
-                    onChange={(event) => updateField("orderId", event.target.value)}
-                    className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none"
-                  />
+                  <div className="grid gap-2">
+                    <input
+                      type="text"
+                      value={currentValues.orderId}
+                      onChange={(event) => updateField("orderId", event.target.value)}
+                      className="h-10 w-full rounded-[8px] border border-[#d9dfec] bg-white px-[14px] text-[#173069] outline-none"
+                    />
+                    {orderLookupLoading ? (
+                      <span className="text-[12px] font-bold text-[#5f7090]">Fetching order details...</span>
+                    ) : null}
+                  </div>
                 </Field>
               </div>
             </section>
@@ -1262,7 +1306,11 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                   >
                     <Check size={18} />
                     <span>
-                      {orderLookupLoading
+                      {generateLoading
+                        ? isInspectorOperator
+                          ? "Generating S.No..."
+                          : "Generating..."
+                        : orderLookupLoading
                         ? "Checking..."
                         : isInspectorOperator
                           ? "Generate S.No"
@@ -1385,6 +1433,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     ? !isLeakTestingOperator
                     : true
           }
+          saving={statusSaveLoading}
           onClose={() => setShowViewAllModal(null)}
           onSave={handleSaveStatuses}
         />

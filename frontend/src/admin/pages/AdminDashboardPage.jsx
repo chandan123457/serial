@@ -14,7 +14,7 @@ import {
   updateAdminUser
 } from "../adminApi";
 
-function FieldlessSearch({ value, onChange, onSearch }) {
+function FieldlessSearch({ value, onChange, onSearch, loading }) {
   return (
     <div className="grid gap-2">
       <label className="text-[14px] font-extrabold text-[#233355]">Serial Number</label>
@@ -23,17 +23,119 @@ function FieldlessSearch({ value, onChange, onSearch }) {
           type="text"
           value={value}
           onChange={(event) => onChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              onSearch();
+            }
+          }}
           className="h-11 rounded-xl border border-[#d8e1f0] px-5 font-mono text-[#173069] outline-none"
+          autoFocus
         />
         <button
           type="button"
           onClick={onSearch}
-          className="rounded-xl bg-[#203c74] px-6 py-3 text-[15px] font-extrabold text-white"
+          disabled={loading}
+          className="rounded-xl bg-[#203c74] px-6 py-3 text-[15px] font-extrabold text-white disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Search
+          {loading ? "Searching..." : "Search"}
         </button>
       </div>
     </div>
+  );
+}
+
+function DetailTile({ label, value }) {
+  return (
+    <div className="rounded-xl border border-[#d8e1f0] bg-[#f8fbff] p-4">
+      <p className="text-[12px] font-extrabold uppercase tracking-[0.08em] text-[#6f7f9b]">{label}</p>
+      <p className="mt-2 text-[15px] font-extrabold text-[#101d3a]">{value || "-"}</p>
+    </div>
+  );
+}
+
+function BarcodeDetailsView({
+  serialSearch,
+  barcodeDetails,
+  barcodeSearchLoading,
+  onSerialChange,
+  onSearch
+}) {
+  return (
+    <section className="rounded-3xl bg-white p-8 shadow-[0_12px_30px_rgba(17,39,89,0.08)]">
+      <FieldlessSearch
+        value={serialSearch}
+        onChange={onSerialChange}
+        onSearch={onSearch}
+        loading={barcodeSearchLoading}
+      />
+
+      {barcodeDetails ? (
+        <div className="mt-8">
+          <h2 className="text-center text-[24px] font-extrabold text-[#12285c]">Serial Number Details</h2>
+          <div className="mx-auto mt-3 h-[2px] w-[72px] bg-[#ffd20c]" />
+          <div className="mt-7 grid gap-3 md:grid-cols-2">
+            <DetailTile label="Serial Number" value={barcodeDetails.serialNumber} />
+            <DetailTile label="Module Name" value={barcodeDetails.moduleName} />
+            <DetailTile label="Order ID" value={barcodeDetails.orderId} />
+            <DetailTile label="Model Number" value={barcodeDetails.modelNumber} />
+            <DetailTile label="RM Code / Aluminium Details" value={barcodeDetails.aluminiumDetails} />
+            <DetailTile label="RM Code / Copper Tube Details" value={barcodeDetails.copperTubeDetails} />
+            <DetailTile label="Inspection Done by inspector at PID Stage" value={barcodeDetails.inspectionNote} />
+          </div>
+
+          <h3 className="mt-7 inline-block border-b-2 border-[#ffd20c] pb-2 text-[14px] font-extrabold text-[#233355]">
+            Operator Flow
+          </h3>
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            {barcodeDetails.operatorFlow.map((item) => (
+              <div key={item.key} className="overflow-hidden rounded-xl border border-[#d8e1f0]">
+                <div className="bg-[#12285c] px-4 py-3 text-[14px] font-extrabold uppercase text-white">
+                  {item.label}
+                </div>
+                <div className="grid grid-cols-[110px_minmax(0,1fr)] border-b border-[#edf2f8] px-4 py-3 text-[14px]">
+                  <span className="font-bold text-[#51627f]">Code</span>
+                  <span>{item.code}</span>
+                </div>
+                <div className="grid grid-cols-[110px_minmax(0,1fr)] border-b border-[#edf2f8] bg-[#f8fbff] px-4 py-3 text-[14px]">
+                  <span className="font-bold text-[#51627f]">Status</span>
+                  <span
+                    className={`w-fit rounded-full px-7 py-1 text-[13px] font-extrabold ${
+                      item.status === "approved"
+                        ? "bg-[#cfffe3] text-[#087f3d]"
+                        : item.status === "rejected"
+                          ? "bg-[#ffe1e8] text-[#c91545]"
+                          : "bg-[#e5e8ee] text-[#4d596b]"
+                    }`}
+                  >
+                    {item.status === "approved"
+                      ? "Approved"
+                      : item.status === "rejected"
+                        ? "Rejected"
+                        : "Untouched"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-[110px_minmax(0,1fr)] px-4 py-3 text-[14px]">
+                  <span className="font-bold text-[#51627f]">Username</span>
+                  <span>{item.username}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="grid min-h-[280px] place-items-center text-center text-[#8390a8]">
+          <div>
+            <div className="text-[54px] leading-none">{barcodeSearchLoading ? "..." : "#"}</div>
+            <p className="mt-5 text-[16px] font-bold text-[#63728d]">
+              {barcodeSearchLoading
+                ? "Searching serial number details..."
+                : "Search a serial number to view barcode details"}
+            </p>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -49,6 +151,7 @@ export default function AdminDashboardPage({ session, onLogout }) {
   const [activePage, setActivePage] = useState("dashboard");
   const [serialSearch, setSerialSearch] = useState("");
   const [barcodeDetails, setBarcodeDetails] = useState(null);
+  const [barcodeSearchLoading, setBarcodeSearchLoading] = useState(false);
 
   const pageTitle = useMemo(
     () => (activePage === "barcode-details" ? "Barcode Details" : "Dashboard"),
@@ -137,100 +240,41 @@ export default function AdminDashboardPage({ session, onLogout }) {
     }
   }
 
+  function handleSerialSearchChange(nextValue) {
+    setSerialSearch(nextValue);
+    setError("");
+
+    if (!nextValue.trim()) {
+      setBarcodeDetails(null);
+      return;
+    }
+
+    if (barcodeDetails?.serialNumber !== nextValue.trim()) {
+      setBarcodeDetails(null);
+    }
+  }
+
   async function handleSerialSearch() {
+    const trimmedSerial = serialSearch.trim();
+
+    if (!trimmedSerial) {
+      setBarcodeDetails(null);
+      setError("");
+      return;
+    }
+
     try {
       setError("");
-      const details = await fetchBarcodeDetails(serialSearch.trim());
+      setBarcodeDetails(null);
+      setBarcodeSearchLoading(true);
+      const details = await fetchBarcodeDetails(trimmedSerial);
       setBarcodeDetails(details);
     } catch (searchError) {
       setBarcodeDetails(null);
       setError(searchError.message);
+    } finally {
+      setBarcodeSearchLoading(false);
     }
-  }
-
-  function DetailTile({ label, value }) {
-    return (
-      <div className="rounded-xl border border-[#d8e1f0] bg-[#f8fbff] p-4">
-        <p className="text-[12px] font-extrabold uppercase tracking-[0.08em] text-[#6f7f9b]">{label}</p>
-        <p className="mt-2 text-[15px] font-extrabold text-[#101d3a]">{value || "-"}</p>
-      </div>
-    );
-  }
-
-  function BarcodeDetailsView() {
-    return (
-      <section className="rounded-3xl bg-white p-8 shadow-[0_12px_30px_rgba(17,39,89,0.08)]">
-        <FieldlessSearch
-          value={serialSearch}
-          onChange={setSerialSearch}
-          onSearch={handleSerialSearch}
-        />
-
-        {barcodeDetails ? (
-          <div className="mt-8">
-            <h2 className="text-center text-[24px] font-extrabold text-[#12285c]">Serial Number Details</h2>
-            <div className="mx-auto mt-3 h-[2px] w-[72px] bg-[#ffd20c]" />
-            <div className="mt-7 grid gap-3 md:grid-cols-2">
-              <DetailTile label="Serial Number" value={barcodeDetails.serialNumber} />
-              <DetailTile label="Module Name" value={barcodeDetails.moduleName} />
-              <DetailTile label="Order ID" value={barcodeDetails.orderId} />
-              <DetailTile label="Model Number" value={barcodeDetails.modelNumber} />
-              <DetailTile label="RM Code / Aluminium Details" value={barcodeDetails.aluminiumDetails} />
-              <DetailTile label="RM Code / Copper Tube Details" value={barcodeDetails.copperTubeDetails} />
-              <DetailTile label="Inspection Done by inspector at PID Stage" value={barcodeDetails.inspectionNote} />
-            </div>
-
-            <h3 className="mt-7 inline-block border-b-2 border-[#ffd20c] pb-2 text-[14px] font-extrabold text-[#233355]">
-              Operator Flow
-            </h3>
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              {barcodeDetails.operatorFlow.map((item) => (
-                <div key={item.key} className="overflow-hidden rounded-xl border border-[#d8e1f0]">
-                  <div className="bg-[#12285c] px-4 py-3 text-[14px] font-extrabold uppercase text-white">
-                    {item.label}
-                  </div>
-                  <div className="grid grid-cols-[110px_minmax(0,1fr)] border-b border-[#edf2f8] px-4 py-3 text-[14px]">
-                    <span className="font-bold text-[#51627f]">Code</span>
-                    <span>{item.code}</span>
-                  </div>
-                  <div className="grid grid-cols-[110px_minmax(0,1fr)] border-b border-[#edf2f8] bg-[#f8fbff] px-4 py-3 text-[14px]">
-                    <span className="font-bold text-[#51627f]">Status</span>
-                    <span
-                      className={`w-fit rounded-full px-7 py-1 text-[13px] font-extrabold ${
-                        item.status === "approved"
-                          ? "bg-[#cfffe3] text-[#087f3d]"
-                          : item.status === "rejected"
-                            ? "bg-[#ffe1e8] text-[#c91545]"
-                            : "bg-[#e5e8ee] text-[#4d596b]"
-                      }`}
-                    >
-                      {item.status === "approved"
-                        ? "Approved"
-                        : item.status === "rejected"
-                          ? "Rejected"
-                          : "Untouched"}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-[110px_minmax(0,1fr)] px-4 py-3 text-[14px]">
-                    <span className="font-bold text-[#51627f]">Username</span>
-                    <span>{item.username}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="grid min-h-[280px] place-items-center text-center text-[#8390a8]">
-            <div>
-              <div className="text-[54px] leading-none">#</div>
-              <p className="mt-5 text-[16px] font-bold text-[#63728d]">
-                Search a serial number to view barcode details
-              </p>
-            </div>
-          </div>
-        )}
-      </section>
-    );
   }
 
   return (
@@ -277,7 +321,13 @@ export default function AdminDashboardPage({ session, onLogout }) {
         ) : null}
 
         {activePage === "barcode-details" ? (
-          <BarcodeDetailsView />
+          <BarcodeDetailsView
+            serialSearch={serialSearch}
+            barcodeDetails={barcodeDetails}
+            barcodeSearchLoading={barcodeSearchLoading}
+            onSerialChange={handleSerialSearchChange}
+            onSearch={handleSerialSearch}
+          />
         ) : loading ? (
           <div className="mt-6 rounded-3xl bg-white p-8 text-[#6e7d92] shadow-[0_12px_30px_rgba(17,39,89,0.08)]">
             Loading dashboard...
