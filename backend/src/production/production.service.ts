@@ -62,14 +62,14 @@ function mapCodeRow(row: Record<string, unknown>) {
   };
 }
 
-function buildSerialNumber(sectionKey: string, manufacturingDate: string, serialIndex: number) {
-  const [, month, year] = manufacturingDate.split("-");
+function buildSerialNumber(sectionKey: string, manufacturingDate: string, sourceSerial: string | number) {
+  const [year, month] = manufacturingDate.split("-");
   const prefix = sectionPrefixMap[sectionKey] ?? sectionKey.slice(0, 1).toUpperCase();
-  return `${prefix}${month}${year.slice(-2)}-${String(serialIndex).padStart(5, "0")}`;
+  return `${prefix}${month}${year.slice(-2)}-${String(sourceSerial).padStart(5, "0")}`;
 }
 
 function buildOperatorCodeValue(operatorNumber: string, manufacturingDate: string, serial: string | number, codeType: string) {
-  const [, month, year] = manufacturingDate.split("-");
+  const [year, month] = manufacturingDate.split("-");
   const prefix =
     codeType === "br" || codeType === "lt"
       ? operatorNumber.split("-")[0]
@@ -375,7 +375,8 @@ export async function generateFpCodes(input: GenerateFpCodesInput) {
 }
 
 export async function updateCodeStatuses(
-  codes: Array<{ id: string; status: "approved" | "rejected" | null }>
+  codes: Array<{ id: string; status: "approved" | "rejected" | null }>,
+  operatorNumber?: string
 ) {
   const client = await pool.connect();
 
@@ -389,11 +390,15 @@ export async function updateCodeStatuses(
         `
           UPDATE generated_operator_codes
           SET status = $1,
+              status_operator_number = CASE
+                WHEN $1::text IS NULL THEN NULL
+                ELSE COALESCE($3, status_operator_number, operator_number)
+              END,
               updated_at = NOW()
           WHERE id = $2
-          RETURNING id, serial, status
+          RETURNING id, serial, status, status_operator_number AS "statusOperatorNumber"
         `,
-        [code.status, code.id]
+        [code.status, code.id, operatorNumber ?? null]
       );
 
       if (result.rows[0]) {
@@ -444,7 +449,8 @@ export async function generateInspectionSerials(input: GenerateInspectionSerials
           SELECT id,
             serial_number AS "serialNumber",
             source_serial AS "sourceSerial",
-            inspection_note AS "inspectionNote"
+            inspection_note AS "inspectionNote",
+            false AS created
           FROM generated_serial_numbers
           WHERE section_key = $1
             AND order_id = $2
@@ -454,7 +460,30 @@ export async function generateInspectionSerials(input: GenerateInspectionSerials
       );
 
       if (existingResult.rows[0]) {
-        serials.push(existingResult.rows[0]);
+        const expectedSerialNumber = buildSerialNumber(
+          input.sectionKey,
+          ltCode.manufacturingDate,
+          ltCode.serial
+        );
+
+        if (existingResult.rows[0].serialNumber !== expectedSerialNumber) {
+          const correctedResult = await client.query(
+            `
+              UPDATE generated_serial_numbers
+              SET serial_number = $1
+              WHERE id = $2
+              RETURNING id,
+                serial_number AS "serialNumber",
+                source_serial AS "sourceSerial",
+                inspection_note AS "inspectionNote",
+                false AS created
+            `,
+            [expectedSerialNumber, existingResult.rows[0].id]
+          );
+          serials.push(correctedResult.rows[0]);
+        } else {
+          serials.push(existingResult.rows[0]);
+        }
         continue;
       }
 
@@ -484,7 +513,7 @@ export async function generateInspectionSerials(input: GenerateInspectionSerials
       const serialNumber = buildSerialNumber(
         input.sectionKey,
         ltCode.manufacturingDate,
-        Number(insertedResult.rows[0].serialIndex)
+        ltCode.serial
       );
 
       const updatedResult = await client.query(
@@ -495,7 +524,8 @@ export async function generateInspectionSerials(input: GenerateInspectionSerials
           RETURNING id,
             serial_number AS "serialNumber",
             source_serial AS "sourceSerial",
-            inspection_note AS "inspectionNote"
+            inspection_note AS "inspectionNote",
+            true AS created
         `,
         [serialNumber, insertedResult.rows[0].id]
       );
@@ -542,13 +572,16 @@ export async function getBarcodeDetails(serialNumber: string) {
     `
       SELECT code_type AS "codeType",
         codes.operator_number AS "operatorNumber",
+        codes.status_operator_number AS "statusOperatorNumber",
         codes.serial,
         codes.status,
         codes.rm_code AS "rmCode",
         TO_CHAR(codes.manufacturing_date, 'YYYY-MM-DD') AS "manufacturingDate",
-        users.username
+        creator.username AS "creatorUsername",
+        status_user.username AS "statusUsername"
       FROM generated_operator_codes codes
-      LEFT JOIN admin_users users ON users.operator_number = codes.operator_number
+      LEFT JOIN admin_users creator ON creator.operator_number = codes.operator_number
+      LEFT JOIN admin_users status_user ON status_user.operator_number = codes.status_operator_number
       WHERE section_key = $1
         AND order_id = $2
         AND serial = $3
@@ -586,7 +619,11 @@ export async function getBarcodeDetails(serialNumber: string) {
       label: code.codeType.toUpperCase(),
       code: code.code,
       status: code.status ?? "untouched",
-      username: code.username ?? code.operatorNumber
+      username:
+        code.statusUsername ??
+        code.statusOperatorNumber ??
+        code.creatorUsername ??
+        code.operatorNumber
     }))
   };
 }

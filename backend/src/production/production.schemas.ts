@@ -38,6 +38,7 @@ export const getFpCodesByOrderSchema = z.object({
 });
 
 export const updateCodeStatusesSchema = z.object({
+  operatorNumber: z.string().min(1).optional(),
   codes: z.array(
     z.object({
       id: z.string().uuid(),

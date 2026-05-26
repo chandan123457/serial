@@ -77,6 +77,11 @@ export async function initializeDatabase() {
 
   await pool.query(`
     ALTER TABLE generated_operator_codes
+    ADD COLUMN IF NOT EXISTS status_operator_number TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE generated_operator_codes
     DROP CONSTRAINT IF EXISTS generated_operator_codes_serial_key;
   `);
 

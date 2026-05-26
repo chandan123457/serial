@@ -51,6 +51,7 @@ function createInitialState() {
     leakTestingOperatorCode: "",
     leakTestingCodes: [],
     inspectionSerials: [],
+    printableInspectionSerials: [],
     packingType: "",
     packerName: "",
     inspectionDoneBy: ""
@@ -119,16 +120,16 @@ function ConfirmGenerateModal({ onClose, onConfirm }) {
   );
 }
 
-function FpCodesModal({ title, codes, lockResolvedStatuses = false, onClose, onSave }) {
+function FpCodesModal({ title, codes, lockedStatuses = [], onClose, onSave }) {
   const [localCodes, setLocalCodes] = useState(codes);
   const lockedCodeIds = useMemo(
     () =>
       new Set(
-        lockResolvedStatuses
-          ? codes.filter((code) => code.status).map((code) => code.id)
-          : []
+        codes
+          .filter((code) => code.status && lockedStatuses.includes(code.status))
+          .map((code) => code.id)
       ),
-    [codes, lockResolvedStatuses]
+    [codes, lockedStatuses]
   );
 
   function setStatus(index, status) {
@@ -296,6 +297,90 @@ function BarcodeSticker({ serialNumber }) {
   );
 }
 
+function createBarcodeSvg(serialNumber) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+
+  JsBarcode(svg, serialNumber, {
+    format: "CODE128",
+    displayValue: false,
+    margin: 0,
+    width: 1,
+    height: 34
+  });
+
+  return new XMLSerializer().serializeToString(svg);
+}
+
+function printBarcodeStickers(serials) {
+  if (serials.length === 0) {
+    return;
+  }
+
+  const printWindow = window.open("", "_blank", "width=420,height=260");
+
+  if (!printWindow) {
+    return;
+  }
+
+  const stickers = serials
+    .map(
+      (serial) => `
+        <section class="sticker">
+          <div class="sticker-inner">
+            ${createBarcodeSvg(serial.serialNumber)}
+            <div class="serial">${serial.serialNumber}</div>
+          </div>
+        </section>
+      `
+    )
+    .join("");
+
+  printWindow.document.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <title>Barcode Stickers</title>
+        <style>
+          @page { size: 60mm 15mm; margin: 0; }
+          html, body { margin: 0; padding: 0; background: #fff; }
+          .sticker {
+            width: 60mm;
+            height: 15mm;
+            display: grid;
+            place-items: center;
+            page-break-after: always;
+            break-after: page;
+          }
+          .sticker:last-child {
+            page-break-after: auto;
+            break-after: auto;
+          }
+          .sticker-inner {
+            display: grid;
+            justify-items: center;
+            gap: 1mm;
+          }
+          svg {
+            width: 35mm;
+            height: 9mm;
+          }
+          .serial {
+            font: 700 7px monospace;
+            line-height: 1;
+          }
+        </style>
+      </head>
+      <body>${stickers}</body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  window.setTimeout(() => {
+    printWindow.print();
+    printWindow.close();
+  }, 250);
+}
+
 export default function ProductionDashboardPage({ session, onLogout }) {
   const [activeSection, setActiveSection] = useState("heat-exchanger");
   const [modelNumbers, setModelNumbers] = useState([]);
@@ -331,10 +416,14 @@ export default function ProductionDashboardPage({ session, onLogout }) {
   const brazerExtraCodesCount = Math.max(currentValues.brazerCodes.length - 1, 0);
   const leakTestingPreview = currentValues.leakTestingCodes[0]?.value ?? "";
   const leakTestingExtraCodesCount = Math.max(currentValues.leakTestingCodes.length - 1, 0);
+  const visibleInspectionSerials =
+    currentValues.printableInspectionSerials.length > 0
+      ? currentValues.printableInspectionSerials
+      : currentValues.inspectionSerials;
   const serialRange =
-    currentValues.inspectionSerials.length > 0
-      ? `${currentValues.inspectionSerials[0].serialNumber} to ${
-          currentValues.inspectionSerials[currentValues.inspectionSerials.length - 1].serialNumber
+    visibleInspectionSerials.length > 0
+      ? `${visibleInspectionSerials[0].serialNumber} to ${
+          visibleInspectionSerials[visibleInspectionSerials.length - 1].serialNumber
         }`
       : "";
   const missingInspectionSerials = currentValues.leakTestingCodes.some(
@@ -564,7 +653,14 @@ export default function ProductionDashboardPage({ session, onLogout }) {
         ...current[activeSection],
         [field]: value,
         ...(field === "orderId" && current[activeSection].orderId !== value
-          ? { fpCodes: [], hpbCodes: [], brazerCodes: [], leakTestingCodes: [], inspectionSerials: [] }
+          ? {
+              fpCodes: [],
+              hpbCodes: [],
+              brazerCodes: [],
+              leakTestingCodes: [],
+              inspectionSerials: [],
+              printableInspectionSerials: []
+            }
           : {})
       }
     }));
@@ -579,14 +675,18 @@ export default function ProductionDashboardPage({ session, onLogout }) {
         inspectionNote: currentValues.inspectionDoneBy
       });
 
+      const serials = response.serials.map((serial) => ({
+        ...serial,
+        sourceSerial: Number(serial.sourceSerial)
+      }));
+      const printableSerials = serials.filter((serial) => serial.created);
+
       setSectionState((current) => ({
         ...current,
         [activeSection]: {
           ...current[activeSection],
-          inspectionSerials: response.serials.map((serial) => ({
-            ...serial,
-            sourceSerial: Number(serial.sourceSerial)
-          }))
+          inspectionSerials: serials,
+          printableInspectionSerials: printableSerials.length > 0 ? printableSerials : serials
         }
       }));
       setShowGenerateConfirm(false);
@@ -655,6 +755,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
 
   async function handleSaveStatuses(nextCodes) {
     const response = await updateOperatorCodeStatuses({
+      operatorNumber: session?.user?.operatorNumber,
       codes: nextCodes.map((code) => ({
         id: code.id,
         status: code.status
@@ -713,14 +814,6 @@ export default function ProductionDashboardPage({ session, onLogout }) {
 
   return (
     <div className="grid min-h-screen grid-cols-1 bg-[#f5f7fb] lg:grid-cols-[280px_minmax(0,1fr)]">
-      <style>
-        {`@media print {
-          body * { visibility: hidden; }
-          .barcode-print-area, .barcode-print-area * { visibility: visible; }
-          .barcode-print-area { position: absolute; inset: 0 auto auto 0; display: grid !important; gap: 0; }
-          @page { size: 60mm 15mm; margin: 0; }
-        }`}
-      </style>
       <aside className="flex flex-col bg-[#15285c] px-4 pt-6 pb-5 text-white">
         <div className="grid justify-items-center gap-[14px] pt-5 text-center">
           <LogoMark />
@@ -1132,7 +1225,7 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                 <div className="mt-9 grid gap-5">
                   <p className="text-[16px] font-extrabold text-[#0d255f]">
                     Generated Serial Range: {serialRange} (Final Approved Qty:{" "}
-                    {currentValues.inspectionSerials.length})
+                    {visibleInspectionSerials.length})
                   </p>
                   <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(220px,540px)]">
                     <Field label="Serial Number">
@@ -1145,14 +1238,14 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     </Field>
                     <button
                       type="button"
-                      onClick={() => window.print()}
+                      onClick={() => printBarcodeStickers(visibleInspectionSerials)}
                       className="self-end rounded-[8px] bg-[#162d61] px-6 py-3 text-[16px] font-bold text-white print:hidden"
                     >
                       Print
                     </button>
                   </div>
-                  <div className="barcode-print-area hidden print:grid print:grid-cols-1 print:gap-0">
-                    {currentValues.inspectionSerials.map((serial) => (
+                  <div className="hidden">
+                    {visibleInspectionSerials.map((serial) => (
                       <BarcodeSticker key={serial.id} serialNumber={serial.serialNumber} />
                     ))}
                   </div>
@@ -1221,10 +1314,14 @@ export default function ProductionDashboardPage({ session, onLogout }) {
                     )
                   : currentValues.fpCodes
           }
-          lockResolvedStatuses={
-            showViewAllModal === "lt" ||
-            showViewAllModal === "lt-approved" ||
-            showViewAllModal === "lt-rejected"
+          lockedStatuses={
+            showViewAllModal === "br"
+              ? ["approved"]
+              : showViewAllModal === "lt" ||
+                  showViewAllModal === "lt-approved" ||
+                  showViewAllModal === "lt-rejected"
+                ? ["approved", "rejected"]
+                : []
           }
           onClose={() => setShowViewAllModal(null)}
           onSave={handleSaveStatuses}

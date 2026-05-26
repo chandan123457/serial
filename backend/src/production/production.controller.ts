@@ -86,7 +86,7 @@ export async function postGenerateLeakTestingCodes(request: Request, response: R
 export async function patchCodeStatuses(request: Request, response: Response) {
   try {
     const payload = updateCodeStatusesSchema.parse(request.body);
-    const codes = await updateCodeStatuses(payload.codes);
+    const codes = await updateCodeStatuses(payload.codes, payload.operatorNumber);
 
     response.json({ codes });
   } catch (error) {
