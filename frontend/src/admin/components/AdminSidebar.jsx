@@ -1,20 +1,18 @@
 import { LogOut } from "lucide-react";
 import { sidebarItems } from "../adminData";
+import appLogo from "../../../assets/icon.ico";
 
 function LogoMark() {
   return (
-    <div className="grid h-[62px] w-[62px] place-items-center rounded-full bg-white" aria-hidden="true">
-      <div className="relative grid h-[42px] w-[42px] place-items-center rounded-full border-2 border-[#e1ebfa] text-[#1994d5]">
-        <span className="absolute top-[7px] h-4 w-4 rounded-full border-t-[3px] border-t-[#1994d5] border-r-[3px] border-r-transparent border-b-[3px] border-b-transparent border-l-[3px] border-l-transparent" />
-        <span className="mt-3 text-[10px] font-extrabold">PR</span>
-      </div>
+    <div className="grid h-[62px] w-[62px] place-items-center rounded-full bg-white p-1.5" aria-hidden="true">
+      <img src={appLogo} alt="" className="h-full w-full rounded-full object-contain" />
     </div>
   );
 }
 
 export default function AdminSidebar({ username, activeItem = "dashboard", onNavigate, onLogout }) {
   return (
-    <aside className="flex min-h-screen flex-col bg-[#101d3a] text-white">
+    <aside className="flex min-h-screen flex-col bg-[#101d3a] text-white xl:sticky xl:top-0 xl:h-screen xl:min-h-0 xl:overflow-hidden">
       <div className="border-b border-white/5 px-4 py-7">
         <div className="grid justify-items-center gap-4 text-center">
           <LogoMark />
@@ -27,7 +25,7 @@ export default function AdminSidebar({ username, activeItem = "dashboard", onNav
 
       <nav className="px-4 py-8">
         <div className="grid gap-3">
-          {sidebarItems.map((item, index) => (
+          {sidebarItems.map((item) => (
             <button
               key={item.key}
               type="button"

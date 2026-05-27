@@ -286,7 +286,7 @@ export default function AdminDashboardPage({ session, onLogout }) {
         onLogout={onLogout}
       />
 
-      <main className="px-5 py-5 sm:px-8">
+      <main className="px-5 py-5 sm:px-8 xl:max-h-screen xl:overflow-y-auto">
         <h1 className="mb-6 text-[27px] font-extrabold text-[#172d63]">{pageTitle}</h1>
 
         {activePage === "dashboard" ? (

@@ -22,6 +22,7 @@ import {
 } from "../admin/adminApi";
 import { condensingUnitSection } from "../condensing/condensingConfig";
 import { evaporatorUnitSection } from "../evaporator/evaporatorConfig";
+import appLogo from "../../assets/icon.ico";
 
 const sections = [
   { id: "heat-exchanger", label: "Heat Exchanger", icon: Flame },
@@ -74,11 +75,8 @@ const initialSectionState = {
 
 function LogoMark() {
   return (
-    <div className="grid h-[62px] w-[62px] place-items-center rounded-full bg-white" aria-hidden="true">
-      <div className="relative grid h-[42px] w-[42px] place-items-center rounded-full border-2 border-[#e1ebfa] text-[#1994d5]">
-        <span className="absolute top-[7px] h-4 w-4 rounded-full border-t-[3px] border-t-[#1994d5] border-r-[3px] border-r-transparent border-b-[3px] border-b-transparent border-l-[3px] border-l-transparent" />
-        <span className="mt-3 text-[10px] font-extrabold">PR</span>
-      </div>
+    <div className="grid h-[62px] w-[62px] place-items-center rounded-full bg-white p-1.5" aria-hidden="true">
+      <img src={appLogo} alt="" className="h-full w-full rounded-full object-contain" />
     </div>
   );
 }

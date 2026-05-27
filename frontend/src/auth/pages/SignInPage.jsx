@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { login } from "../authApi";
+import appLogo from "../../../assets/icon.ico";
 
 const roles = [
   { key: "admin", label: "Admin Login" },
@@ -8,11 +9,8 @@ const roles = [
 
 function LogoMark() {
   return (
-    <div className="grid h-[72px] w-[72px] place-items-center rounded-full bg-white shadow-sm" aria-hidden="true">
-      <div className="relative grid h-[48px] w-[48px] place-items-center rounded-full border-2 border-[#e1ebfa] text-[#1994d5]">
-        <span className="absolute top-[8px] h-4 w-4 rounded-full border-t-[3px] border-t-[#1994d5] border-r-[3px] border-r-transparent border-b-[3px] border-b-transparent border-l-[3px] border-l-transparent" />
-        <span className="mt-3 text-[11px] font-extrabold">PR</span>
-      </div>
+    <div className="grid h-[72px] w-[72px] place-items-center rounded-full bg-white p-2 shadow-sm" aria-hidden="true">
+      <img src={appLogo} alt="" className="h-full w-full rounded-full object-contain" />
     </div>
   );
 }
